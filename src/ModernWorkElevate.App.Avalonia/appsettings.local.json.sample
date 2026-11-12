@@ -1,0 +1,29 @@
+// Copy this file to `appsettings.local.json` (same directory) and fill in
+// your real values. `appsettings.local.json` is gitignored — never commit it.
+//
+// See docs/app-registration-setup.md for how to obtain a client id.
+{
+  "ModernWorkElevate": {
+    // One entry per tenant you sign in to: the tenant's id, the client id of the
+    // App Registration to use there, the sovereign cloud ("Global" or "China";
+    // defaults to "Global") and an optional label shown instead of the tenant's
+    // display name.
+    //
+    // A multi-tenant App Registration used in several tenants is listed once per
+    // tenant with the same client id. A customer's single-tenant registration is
+    // simply an entry with their client id. A registration exists in exactly one
+    // cloud — a Global client id is unknown in Entra China and vice versa.
+    //
+    // This list is also the whitelist: a tenant without an entry cannot be enrolled.
+    // Keep it in ONE file only — IConfiguration overlays arrays index by index
+    // across files, so entries in two files would merge field by field.
+    "TenantAppRegistrations": [
+      {
+        "TenantId": "00000000-0000-0000-0000-000000000000",
+        "ClientId": "00000000-0000-0000-0000-000000000000",
+        "Cloud": "Global",
+        "Label": "Home tenant"
+      }
+    ]
+  }
+}

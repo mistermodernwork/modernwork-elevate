@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                           revision="1.0"
+                           schemaVersion="1.0"
+                           xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>ModernWork Elevate</displayName>
+  <description>Geräteweite Einstellungen für ModernWork Elevate.</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_ModernWorkElevate_1_2">ModernWork Elevate 1.2 oder neuer unter Windows 11 25H2 oder neuer</string>
+      <string id="Cat_ModernWorkElevate">ModernWork Elevate</string>
+
+      <string id="Tenants">Vorkonfigurierte Tenants und App-Registrierungen</string>
+      <string id="Tenants_Help">Legt die Tenants fest, bei denen sich die Benutzer dieses Geräts anmelden können.
+
+Wertname: die Tenant-ID (Verzeichnis-ID), eine GUID.
+Wert: die Anwendungs-ID (Client-ID) der App-Registrierung für diesen Tenant, optional gefolgt von ;Bezeichnung und ;Cloud.
+
+Beispiele:
+  Wertname 11111111-2222-3333-4444-555555555555, Wert aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  Wertname 11111111-2222-3333-4444-555555555555, Wert aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee;Contoso;Global
+
+Cloud ist Global (Standard) oder China. Ein Eintrag hier ersetzt einen vom Benutzer konfigurierten Eintrag für denselben Tenant. Ungültige Einträge werden ignoriert und protokolliert.
+
+Aktiviert: Die aufgeführten Tenants stehen allen Benutzern zur Verfügung; Benutzer können weitere hinzufügen, sofern "Tenant-Liste sperren" nicht aktiviert ist.
+Deaktiviert oder nicht konfiguriert: Benutzer konfigurieren ihre Tenants selbst.</string>
+
+      <string id="LockTenants">Tenant-Liste sperren</string>
+      <string id="LockTenants_Help">Aktiviert: Nur die Tenants aus "Vorkonfigurierte Tenants und App-Registrierungen" stehen zur Verfügung. Vom Benutzer konfigurierte Tenants werden ignoriert; Benutzer können keine Tenants hinzufügen, ändern oder entfernen.
+
+Deaktiviert oder nicht konfiguriert: Benutzer können zusätzlich zu den vorkonfigurierten Tenants eigene hinzufügen.</string>
+
+
+    </stringTable>
+    <presentationTable>
+      <presentation id="Tenants">
+        <listBox refId="TenantsList">Tenants (Wertname = Tenant-ID, Wert = Client-ID[;Bezeichnung[;Cloud]]):</listBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

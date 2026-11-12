@@ -1,0 +1,10 @@
+Windows Registry Editor Version 5.00
+
+; Beispiel: Richtlinie ohne ADMX setzen (Test, Paketierung, Intune-Remediation).
+; Platzhalter-GUIDs durch echte Werte ersetzen. Wert der Tenants: ClientId[;Bezeichnung[;Cloud]].
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate]
+"LockTenants"=dword:00000001
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate\Tenants]
+"00000000-0000-0000-0000-000000000001"="00000000-0000-0000-0000-0000000000aa;Contoso;Global"

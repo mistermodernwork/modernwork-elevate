@@ -1,0 +1,1245 @@
+namespace ModernWorkElevate.AppAvalonia.ViewModels;
+
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Reflection;
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Media.Imaging;
+using Avalonia.Styling;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using ModernWorkElevate.AppAvalonia.Services;
+using ModernWorkElevate.Core.Auth;
+using ModernWorkElevate.Core.Collections;
+using ModernWorkElevate.Core.Configuration;
+using ModernWorkElevate.Core.Diagnostics;
+using ModernWorkElevate.Core.Services;
+
+/// <summary>
+/// View model for the Settings slide-in panel. Mirrors the activation /
+/// add-tenant pattern: an animated overlay with auto-save on each control
+/// change (no explicit Save button), exposing a <see cref="Closed"/> event so
+/// the shell can keep the panel slots mutually exclusive.
+/// </summary>
+public sealed partial class SettingsPanelViewModel : ObservableObject
+{
+    // The panel draws the logo 32 px tall; three times that keeps it sharp up to
+    // 300 % display scaling without holding a print-size image in memory.
+    private const int LogoDecodeHeight = 96;
+
+    /// <summary>
+    /// Outer guard for the whole network-check run; each probe already caps
+    /// itself at 10 s and all probes run in parallel, so this never fires in
+    /// practice.
+    /// </summary>
+    private static readonly TimeSpan NetworkCheckTimeout = TimeSpan.FromSeconds(30);
+
+    private readonly IUserSettingsService _userSettings;
+    private readonly IAutostartService _autostart;
+    private readonly IShortcutService _shortcuts;
+    private readonly ModernWorkElevateOptions _options;
+    private readonly INetworkDiagnosticsService _networkDiagnostics;
+    private readonly IToastService _toastService;
+    private readonly ILogger<SettingsPanelViewModel> _logger;
+
+    /// <summary>
+    /// The registrations as they now stand on disk. Seeded from the startup options
+    /// snapshot and kept in step with every save and removal, because the file itself is
+    /// only read again at launch.
+    /// </summary>
+    private readonly List<TenantAppRegistration> _registrations = [];
+
+    /// <summary>
+    /// The plain-text report of the last completed network check — what the
+    /// "Copy report" button puts on the clipboard.
+    /// </summary>
+    private string? _lastNetworkReportText;
+
+    /// <summary>
+    /// When true, the <c>OnXxxChanged</c> partial-void handlers skip
+    /// <see cref="PersistAndApply"/>. Used while <see cref="Open"/> seeds the
+    /// observable properties from the current settings so the act of opening
+    /// the panel doesn't immediately rewrite the file.
+    /// </summary>
+    private bool _suppressPersist;
+
+    /// <summary>
+    /// The user's own choice for the TENANTS section, which is what
+    /// <see cref="UserSettings.SettingsAccountsExpanded"/> stores. Distinct from
+    /// <see cref="IsTenantsSectionExpanded"/>, which <see cref="Open"/> may force open.
+    /// </summary>
+    private bool _persistedTenantsExpanded = true;
+
+    /// <summary>
+    /// The accounts host (Shell) is attached after construction via
+    /// <see cref="AttachAccountsHost"/> — see <see cref="IAccountsHost"/> for
+    /// why this isn't a constructor dependency.
+    /// </summary>
+    private IAccountsHost? _accountsHost;
+
+    [ObservableProperty]
+    private bool _isOpen;
+
+    [ObservableProperty]
+    private ThemeOption _selectedTheme;
+
+    /// <summary>The logo at <see cref="AppPaths.LogoFile"/>, or <c>null</c>.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LogoButtonText))]
+    private Bitmap? _logo;
+
+    [ObservableProperty]
+    private string? _logoError;
+
+    [ObservableProperty]
+    private bool _startWithWindows;
+
+    /// <summary>
+    /// Bound to the "Start menu entry" toggle. Like <see cref="StartWithWindows"/>
+    /// the artifact itself (the shortcut file) is the source of truth, not the
+    /// persisted settings — so toggling create/removes it directly and never calls
+    /// <c>UpdateAsync</c>. The row is hidden when <see cref="CanManageStartMenuShortcut"/>
+    /// is false (dev / portable, where there is no install to anchor a shortcut to).
+    /// </summary>
+    [ObservableProperty]
+    private bool _createStartMenuShortcut;
+
+    [ObservableProperty]
+    private DurationOption _selectedDuration;
+
+    [ObservableProperty]
+    private bool _expiryWarningEnabled;
+
+    [ObservableProperty]
+    private ExpiryThresholdOption _selectedExpiryThreshold;
+
+    [ObservableProperty]
+    private bool _automaticUpdatesEnabled;
+
+    /// <summary>
+    /// Bound to the log-detail ComboBox in DIAGNOSTICS. Applied live through
+    /// the Serilog level switch (App subscribes to the settings Changed
+    /// event), so no restart is needed.
+    /// </summary>
+    [ObservableProperty]
+    private LogLevelOption _selectedLogLevel;
+
+    /// <summary>
+    /// Whether the TENANTS section is expanded. Persisted in
+    /// <see cref="UserSettings.SettingsAccountsExpanded"/> (the field predates the merge
+    /// of the two sections; renaming the JSON key would break existing settings files),
+    /// but forced open on <see cref="Open"/> while any tenant still needs attention.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isTenantsSectionExpanded = true;
+
+    /// <summary>
+    /// True after the user successfully saved a client id. Drives the
+    /// inline "Restart required" banner — the new value only takes effect
+    /// on the next process start.
+    /// </summary>
+    [ObservableProperty]
+    private bool _showRestartPrompt;
+
+    [ObservableProperty]
+    private bool _isUpdateCheckRunning;
+
+    /// <summary>
+    /// Outcome of the last manual update check, shown under the button. Empty
+    /// until one has run — pressing the button is the only thing that fills it.
+    /// </summary>
+    [ObservableProperty]
+    private string _updateCheckStatus = string.Empty;
+
+    [ObservableProperty]
+    private bool _isNetworkCheckRunning;
+
+    [ObservableProperty]
+    private bool _hasNetworkCheckResults;
+
+    /// <summary>True right after a copy, until the next run — drives the "Copied" hint.</summary>
+    [ObservableProperty]
+    private bool _reportCopied;
+
+    [ObservableProperty]
+    private IReadOnlyList<NetworkCheckGroupViewModel> _networkCheckGroups = [];
+
+    /// <summary>
+    /// The "add a tenant" form at the bottom of the section. The tenant id must parse as a
+    /// GUID and the chosen way must yield a client id before <see cref="AddTenantCommand"/>
+    /// enables; the label is optional. An existing tenant is edited in its own card instead —
+    /// see <see cref="TenantNodeViewModel"/>. Cleared on every <see cref="Open"/> and after a
+    /// successful add.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanAddRegistration))]
+    [NotifyPropertyChangedFor(nameof(IsNewTenantAlreadyConfigured))]
+    [NotifyCanExecuteChangedFor(nameof(AddTenantCommand))]
+    private string _newTenantId = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanAddRegistration))]
+    [NotifyCanExecuteChangedFor(nameof(AddTenantCommand))]
+    private string _newClientId = string.Empty;
+
+    [ObservableProperty]
+    private string _newLabel = string.Empty;
+
+    /// <summary>
+    /// The tenant's ticketing system, prefilled into the activation form. Unlike the
+    /// rest of this form it is stored in <see cref="UserSettings.TicketSystems"/> and
+    /// takes effect at once — it is workflow, not auth configuration.
+    /// </summary>
+    [ObservableProperty]
+    private string _newTicketSystem = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanAddRegistration))]
+    [NotifyPropertyChangedFor(nameof(IsNewTenantAlreadyConfigured))]
+    [NotifyPropertyChangedFor(nameof(IsNewTenantChina))]
+    [NotifyCanExecuteChangedFor(nameof(AddTenantCommand))]
+    private CloudOption _newTenantCloud;
+
+    /// <summary>
+    /// The way chosen in the form: shared-hosted, or the tenant's own registration. Always
+    /// false while this build ships no shared client id.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanAddRegistration))]
+    [NotifyCanExecuteChangedFor(nameof(AddTenantCommand))]
+    private bool _newIsSharedHosted;
+
+    public SettingsPanelViewModel(
+        IUserSettingsService userSettings,
+        IAutostartService autostart,
+        IShortcutService shortcuts,
+        IOptions<ModernWorkElevateOptions> options,
+        INetworkDiagnosticsService networkDiagnostics,
+        IToastService toastService,
+        ILogger<SettingsPanelViewModel> logger)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _userSettings = userSettings;
+        _autostart = autostart;
+        _shortcuts = shortcuts;
+        _options = options.Value;
+        _networkDiagnostics = networkDiagnostics;
+        _toastService = toastService;
+        _logger = logger;
+
+        _selectedTheme = ThemeOptions[0];
+        _logo = File.Exists(AppPaths.LogoFile) ? LoadLogo(() => File.OpenRead(AppPaths.LogoFile)) : null;
+        _selectedDuration = DurationOptions[0];
+        _selectedExpiryThreshold = ExpiryThresholdOptions[0];
+        _selectedLogLevel = LogLevelOptions[1];
+
+        // Configuration order — the same order as the "Sign in with" picker. The
+        // validator has already rejected unknown cloud names at startup.
+        _registrations.AddRange(_options.TenantAppRegistrations.Select(Clone));
+        _newTenantCloud = CloudOptions[0];
+        SyncTenantNodes();
+    }
+
+    /// <summary>Raised when the panel closes — payload-less; the shell uses it to drop the exclusive-toggle.</summary>
+    public event Action? Closed;
+
+    /// <summary>
+    /// Raised by the "Check for updates" button. <see cref="Tray.UpdateController"/>
+    /// subscribes to it and answers with what the check found; the VM has no direct
+    /// dependency on the updater.
+    /// </summary>
+    public event Func<Task<UpdateCheckOutcome>>? CheckForUpdatesRequested;
+
+    /// <summary>
+    /// Raised by "Copy report" with the report text. <see cref="Tray.TrayPopupController"/>
+    /// subscribes and forwards to the window's clipboard; the VM has no view dependency.
+    /// </summary>
+    public event Func<string, Task>? CopyReportRequested;
+
+    /// <summary>
+    /// Raised by the logo button to ask for a PNG; answers with its local path, or
+    /// <c>null</c> when the user cancelled. <see cref="Tray.TrayPopupController"/> forwards
+    /// it to the window's file picker; the VM has no view dependency.
+    /// </summary>
+    public event Func<Task<string?>>? PickLogoRequested;
+
+    /// <summary>
+    /// One button that removes the logo there is, or picks one when there is none. Not
+    /// two swapped by visibility, so Remove keeps the keyboard focus; Choose… gives it
+    /// up to the file dialog, as every async button here does while it runs.
+    /// </summary>
+    public string LogoButtonText => Logo is null ? "Choose…" : "Remove";
+
+    /// <summary>
+    /// The WAM out-of-process caveat, shown under the results and appended to
+    /// the report — single-sourced so UI and ticket text never drift apart.
+    /// </summary>
+    public string NetworkCheckCaveat => NetworkDiagnosticsReportFormatter.WamCaveat;
+
+    /// <summary>Theme choices presented in the ComboBox.</summary>
+    public IReadOnlyList<ThemeOption> ThemeOptions { get; } = new[]
+    {
+        new ThemeOption(ThemePreference.System, "System"),
+        new ThemeOption(ThemePreference.Light, "Light"),
+        new ThemeOption(ThemePreference.Dark, "Dark"),
+    };
+
+    /// <summary>Default-duration choices presented in the ComboBox.</summary>
+    public IReadOnlyList<DurationOption> DurationOptions { get; } = new[]
+    {
+        new DurationOption(1.0, "1 hour"),
+        new DurationOption(2.0, "2 hours"),
+        new DurationOption(4.0, "4 hours"),
+        new DurationOption(8.0, "8 hours"),
+    };
+
+    /// <summary>Expiry-warning threshold choices presented in the ComboBox.</summary>
+    public IReadOnlyList<ExpiryThresholdOption> ExpiryThresholdOptions { get; } = new[]
+    {
+        new ExpiryThresholdOption(5, "5 minutes"),
+        new ExpiryThresholdOption(10, "10 minutes"),
+        new ExpiryThresholdOption(15, "15 minutes"),
+    };
+
+    /// <summary>Log-detail choices presented in the ComboBox. Index 1 (Normal) is the default.</summary>
+    public IReadOnlyList<LogLevelOption> LogLevelOptions { get; } = new[]
+    {
+        new LogLevelOption(LogLevelPreference.Debug, "Debug (verbose)"),
+        new LogLevelOption(LogLevelPreference.Information, "Normal"),
+        new LogLevelOption(LogLevelPreference.Warning, "Warnings only"),
+    };
+
+    /// <summary>X-offset for the slide-in transform — mirrors the other panels.</summary>
+    public double PanelOffsetX => IsOpen ? 0 : 420;
+
+    /// <summary>
+    /// Whether the "Start menu entry" row is shown. False outside a real the installer
+    /// install (dev / portable), where there is no shortcut to manage — the row
+    /// then hides rather than presenting a toggle that does nothing.
+    /// </summary>
+    public bool CanManageStartMenuShortcut => _shortcuts.IsSupported;
+
+    /// <summary>
+    /// The tenants, each with its registration and the accounts signed into it. The
+    /// union of what is configured and what is enrolled: "Remove tenant" takes both, but a
+    /// registration removed outside the app — a hand edit, the install script — leaves its
+    /// accounts behind, and they still need a card to sit under and be removed from.
+    /// </summary>
+    public ObservableCollection<TenantNodeViewModel> Nodes { get; } = [];
+
+    /// <summary>Cloud choices for the form, in <see cref="EntraCloud"/> declaration order.</summary>
+    public IReadOnlyList<CloudOption> CloudOptions { get; } = [.. Enum.GetValues<EntraCloud>()
+        .Select(c => new CloudOption(c, EntraCloudInfo.DisplayName(c)))];
+
+    /// <summary>
+    /// Whether the form offers the way at all. Without a shipped shared client id there is
+    /// only self-hosted, and the form shows no shared-hosted wording.
+    /// </summary>
+    public bool IsHostingChoiceAvailable => _options.SharedHostedClientId is not null;
+
+    /// <summary>Entra China has no shared-hosted registration: the form disables that way.</summary>
+    public bool IsNewTenantChina => NewTenantCloud.Cloud == EntraCloud.China;
+
+    /// <summary>
+    /// True when the form names a tenant that already has an entry. Adding would overwrite
+    /// it silently; its card's gear is the place to change it.
+    /// </summary>
+    public bool IsNewTenantAlreadyConfigured => Guid.TryParse(NewTenantId, out _)
+        && _registrations.Any(r => SlotOf(r)?.Key == new TenantSlot(NewTenantCloud.Cloud, NewTenantId).Key);
+
+    /// <summary>Add is allowed for a new tenant id once the chosen way yields a client id.</summary>
+    public bool CanAddRegistration => !_options.TenantsLockedByPolicy
+        && Guid.TryParse(NewTenantId, out _)
+        && !IsNewTenantAlreadyConfigured
+        && NewClientIdResolved() is not null;
+
+    /// <summary>
+    /// True when at least one registration exists and every one of them has been proven
+    /// by a sign-in. Drives the single "Verified" badge in the section header.
+    /// </summary>
+    /// <remarks>
+    /// Counts only tenants that actually have a registration. A tenant whose registration
+    /// was removed but whose accounts remain has nothing to verify, and letting it into
+    /// this test would suppress the badge for a setup that is entirely fine.
+    /// </remarks>
+    public bool AreAppRegistrationsVerified =>
+        Nodes.Any(n => n.HasRegistration) && Nodes.Where(n => n.HasRegistration).All(n => n.IsVerified);
+
+    /// <summary>
+    /// Folder holding the rolling Serilog files — the same location
+    /// <c>App.BuildHost</c> configures the file sink to write to.
+    /// </summary>
+    public string LogDirectory => AppPaths.LogDirectory;
+
+    /// <summary>
+    /// Wires the accounts host (typically <see cref="ShellViewModel"/>) after
+    /// both VMs exist — see <see cref="IAccountsHost"/> for rationale. Re-raises
+    /// <see cref="HasAccounts"/> when the underlying collection mutates so the
+    /// empty-state caption flips correctly.
+    /// </summary>
+    public void AttachAccountsHost(IAccountsHost host)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        _accountsHost = host;
+        _accountsHost.Accounts.CollectionChanged += (_, _) => SyncTenantNodes();
+        _accountsHost.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(IAccountsHost.IsBusy))
+            {
+                foreach (var node in Nodes)
+                {
+                    node.RemoveConfirmation.Refresh();
+                    node.SaveConfirmation.Refresh();
+                }
+            }
+        };
+        SyncTenantNodes();
+    }
+
+    /// <summary>
+    /// Re-raises the App Registration verification properties. Called by the
+    /// shell when a sign-in proves the configuration while the panel is open,
+    /// so the card flips to its verified state without a reopen.
+    /// </summary>
+    public void NotifyAppRegistrationVerificationChanged()
+    {
+        foreach (var node in Nodes)
+        {
+            node.NotifyStateChanged();
+        }
+
+        OnPropertyChanged(nameof(AreAppRegistrationsVerified));
+    }
+
+    /// <summary>
+    /// True when a sign-in to the tenant goes through the registration Settings shows: an
+    /// entry the user has not removed, with the client id the startup configuration loaded.
+    /// False between a change and the restart that loads it — a sign-in then would use the old
+    /// registration and leave its tokens behind, the very ones a switch just removed.
+    /// </summary>
+    public bool IsRegistrationLoaded(EntraCloud cloud, string tenantId)
+    {
+        var key = new TenantSlot(cloud, tenantId).Key;
+        var registration = _registrations.FirstOrDefault(r => SlotOf(r)?.Key == key);
+        return registration is not null
+            && TenantSlot.NormaliseTenantId(_options.ClientIdFor(cloud, tenantId)) == TenantSlot.NormaliseTenantId(registration.ClientId);
+    }
+
+    /// <summary>Seeds the controls from the current settings + autostart state and slides the panel in.</summary>
+    public void Open()
+    {
+        _suppressPersist = true;
+        try
+        {
+            var current = _userSettings.Current;
+            SelectedTheme = ThemeOptions.FirstOrDefault(o => o.Value == current.Theme) ?? ThemeOptions[0];
+            SelectedLogLevel = LogLevelOptions.FirstOrDefault(o => o.Value == current.LogLevel) ?? LogLevelOptions[1];
+            SelectedDuration = DurationOptions.FirstOrDefault(o => o.Hours == current.DefaultDurationHours)
+                ?? DurationOptions[0];
+            SelectedExpiryThreshold = ExpiryThresholdOptions.FirstOrDefault(o => o.Minutes == current.ExpiryWarningMinutes)
+                ?? ExpiryThresholdOptions[0];
+            ExpiryWarningEnabled = current.ExpiryWarningEnabled;
+            AutomaticUpdatesEnabled = current.AutomaticUpdatesEnabled;
+            SyncTenantNodes();
+            ClearForm();
+            ShowRestartPrompt = false;
+            LogoError = null;
+
+            // A verdict from an earlier visit says nothing about now — a release
+            // published since would make it read as a denial.
+            UpdateCheckStatus = string.Empty;
+
+            // A fully proven setup honours whatever the user last chose; as long as any
+            // tenant is unconfigured or unproven — or none exists yet — the section opens
+            // anyway, so the next step is visible without hunting for it.
+            // Kept apart from what gets persisted: forcing the section open must not
+            // overwrite the user's own collapse preference the next time anything else
+            // in Settings is saved.
+            _persistedTenantsExpanded = current.SettingsAccountsExpanded;
+            IsTenantsSectionExpanded = _persistedTenantsExpanded
+                || Nodes.Count == 0
+                || Nodes.Any(n => !n.HasRegistration || !n.IsVerified);
+
+            // Pulled live from the registry so a parallel toggle in the tray
+            // menu is reflected even mid-session.
+            StartWithWindows = _autostart.IsEnabled;
+
+            // Likewise read live from disk so the shortcut's actual presence
+            // (it may have been removed in the first-run dialog) drives the toggle.
+            CreateStartMenuShortcut = _shortcuts.IsStartMenuShortcutPresent;
+        }
+        finally
+        {
+            _suppressPersist = false;
+        }
+
+        IsOpen = true;
+    }
+
+    /// <summary>
+    /// A detached copy of a configured registration. The options object is what MSAL
+    /// resolves client ids from on every call, so editing an entry in place would apply
+    /// the change at once — while the banner promises it takes effect on restart, and the
+    /// new client id has no token cache yet.
+    /// </summary>
+    private static TenantAppRegistration Clone(TenantAppRegistration registration)
+        => new()
+        {
+            TenantId = registration.TenantId,
+            ClientId = registration.ClientId,
+            Cloud = registration.Cloud,
+            Label = registration.Label,
+        };
+
+    /// <summary>The slot a configured registration occupies, or <c>null</c> for an unparseable cloud.</summary>
+    private static TenantSlot? SlotOf(TenantAppRegistration registration)
+        => Enum.TryParse<EntraCloud>(registration.Cloud, ignoreCase: true, out var cloud)
+            ? new TenantSlot(cloud, registration.TenantId)
+            : null;
+
+    /// <summary>
+    /// Brings <see cref="Nodes"/> in line with the configured registrations and the
+    /// enrolled accounts. Cheap and idempotent on purpose: it runs on every account
+    /// change, and enrolling N accounts at startup fires it N+1 times.
+    /// </summary>
+    /// <remarks>
+    /// Diffed rather than rebuilt. Clearing the collection would make the list drop and
+    /// recreate every row, and a recreated row loses keyboard focus — which would throw
+    /// the user out of the alias box mid-word whenever a refresh landed. See
+    /// <see cref="ObservableCollectionSync"/>.
+    /// </remarks>
+    private void SyncTenantNodes()
+    {
+        var accountRows = _accountsHost?.Accounts.ToList() ?? [];
+        var accountSlots = accountRows.ConvertAll(a => new TenantSlot(a.Account.Cloud, a.Account.TenantId));
+        var registrationSlots = _registrations.Select(SlotOf).OfType<TenantSlot>().ToList();
+
+        var desired = new List<TenantNodeViewModel>();
+        foreach (var slot in TenantSlot.Merge(accountSlots, registrationSlots))
+        {
+            var node = Nodes.FirstOrDefault(n => string.Equals(n.Key, slot.Key, StringComparison.Ordinal))
+                ?? new TenantNodeViewModel(
+                    slot,
+                    _options,
+                    () => _userSettings.Current,
+                    SaveNodeAsync,
+                    RemoveNodeAsync,
+                    AddAccountToNode,
+                    () => _accountsHost?.IsBusy ?? false);
+
+            // Sign-in needs both: an entry the user has not removed, and the very client id
+            // the startup configuration loaded. A removal disables the button before the
+            // restart that enacts it; a fresh addition or a changed client id until the
+            // restart that loads it.
+            var registration = _registrations.FirstOrDefault(r => SlotOf(r)?.Key == slot.Key);
+            var loaded = IsRegistrationLoaded(slot.Cloud, slot.TenantId);
+            node.UpdateRegistration(
+                registration?.ClientId,
+                registration?.Label,
+                _userSettings.Current.TicketSystemFor(slot.TenantId),
+                loaded);
+
+            var rows = accountRows
+                .Where(a => new TenantSlot(a.Account.Cloud, a.Account.TenantId).Key == slot.Key)
+                .ToList();
+            ObservableCollectionSync.Apply(node.Accounts, rows);
+            desired.Add(node);
+        }
+
+        ObservableCollectionSync.Apply(Nodes, desired);
+        OnPropertyChanged(nameof(AreAppRegistrationsVerified));
+
+        // The registrations may have changed under a tenant id already typed into the form.
+        OnPropertyChanged(nameof(IsNewTenantAlreadyConfigured));
+        OnPropertyChanged(nameof(CanAddRegistration));
+        AddTenantCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Saves one tenant card: its client id and label to the per-user
+    /// <c>appsettings.local.json</c>, its ticketing system to the user settings.
+    /// </summary>
+    /// <remarks>
+    /// The two halves are deliberately not saved alike. A registration change only takes
+    /// effect on the next launch, because MSAL's clients are built from the startup
+    /// configuration — so it writes the file and raises the restart banner. The ticketing
+    /// system is workflow, applies at once, and must not make the app ask for a restart
+    /// it does not need.
+    /// <para/>
+    /// A changed client id with accounts signed in removes those accounts first, the way
+    /// "Remove tenant" does. Their tokens belong to the old registration, and only now,
+    /// while the startup configuration still resolves it, can they be purged from the
+    /// broker. The user adds the accounts again after the restart.
+    /// </remarks>
+    /// <summary>
+    /// When a machine policy locks the tenant list, per-user edits would be
+    /// ignored at the next start anyway, so they are refused up front with a visible reason
+    /// instead of appearing to work.
+    /// </summary>
+    private bool RejectWhenTenantsLocked(string action)
+    {
+        if (!_options.TenantsLockedByPolicy)
+        {
+            return false;
+        }
+
+        _toastService.ShowError(action, "Tenants are managed by your organization's policy and cannot be changed here.");
+        return true;
+    }
+
+    private async Task SaveNodeAsync(TenantNodeViewModel node)
+    {
+        if (RejectWhenTenantsLocked("Save tenant"))
+        {
+            return;
+        }
+
+        var clientId = node.ResolvedClientIdDraft!; // CanSave gates the command
+
+        var removesAccounts = node.SaveRemovesAccounts;
+        if (removesAccounts
+            && (_accountsHost is null || !await _accountsHost.RemoveAccountsAsync([.. node.Accounts.Select(a => a.Account)])))
+        {
+            return;
+        }
+
+        var label = string.IsNullOrWhiteSpace(node.LabelDraft) ? null : node.LabelDraft.Trim();
+        var existing = _registrations.FirstOrDefault(r => SlotOf(r)?.Key == node.Key);
+        var registrationChanged = existing is null
+            || TenantSlot.NormaliseTenantId(existing.ClientId) != TenantSlot.NormaliseTenantId(clientId)
+            || !string.Equals(existing.Label, label, StringComparison.Ordinal);
+
+        if (registrationChanged)
+        {
+            try
+            {
+                LocalConfigStore.SaveTenantRegistration(
+                    AppPaths.LocalConfigFile,
+                    new TenantAppRegistration
+                    {
+                        TenantId = node.TenantId,
+                        ClientId = clientId,
+                        Cloud = node.Cloud.ToString(),
+                        Label = label,
+                    });
+            }
+            catch (Exception ex)
+            {
+                // After a switch the accounts are already gone, so a log line alone would leave
+                // the user with an emptied card and the old registration, and no word why.
+                _logger.LogError(ex, "Failed to save the App Registration for cloud {Cloud}, tenant {TenantId}", node.Cloud, node.TenantId);
+                var detail = removesAccounts
+                    ? "Its accounts were removed, but its App Registration could not be saved to appsettings.local.json."
+                    : "Its App Registration could not be saved to appsettings.local.json.";
+                _toastService.ShowError("Save tenant", $"{detail} Check that the file is writable and valid JSON, then try again.");
+                return;
+            }
+
+            if (existing is null)
+            {
+                _registrations.Add(new TenantAppRegistration
+                {
+                    TenantId = node.TenantId,
+                    ClientId = clientId,
+                    Cloud = node.Cloud.ToString(),
+                    Label = label,
+                });
+            }
+            else
+            {
+                // Mutated rather than replaced, so the entry keeps its position in the
+                // configuration order the tenant list falls back to.
+                existing.ClientId = clientId;
+                existing.Label = label;
+            }
+
+            ShowRestartPrompt = true;
+            _logger.LogInformation(
+                "App Registration saved for cloud {Cloud}, tenant {TenantId}; awaiting restart.",
+                node.Cloud,
+                node.TenantId);
+        }
+
+        // Awaited: SyncTenantNodes reads the ticket system back from the settings, and before the
+        // update has run it would cache the old one on the card.
+        await SaveTicketSystemAsync(
+            node.TenantId,
+            string.IsNullOrWhiteSpace(node.TicketSystemDraft) ? null : node.TicketSystemDraft.Trim());
+
+        node.IsConfigExpanded = false;
+        SyncTenantNodes();
+    }
+
+    /// <summary>
+    /// Removes a tenant completely: every account enrolled in it, with its tokens, then its
+    /// registration from the per-user config, then its ticketing system.
+    /// </summary>
+    /// <remarks>
+    /// Accounts go first, and a failure there stops the removal before the registration is
+    /// touched — the host has already said why, and the card stays for a retry. The token
+    /// purge resolves the MSAL client through the registration, so a registration removed
+    /// ahead of a failed account would, after the next restart, leave that account's tokens
+    /// with nothing to purge them through. A purge that itself fails is not caught on a
+    /// retry: see "Account removal drops the store entry before the token purge" in
+    /// docs/engineering-backlog.md. Aliases, pins, favourites and scope sets stay on disk:
+    /// invisible without the accounts, and back if the tenant is added again.
+    /// </remarks>
+    private async Task RemoveNodeAsync(TenantNodeViewModel node)
+    {
+        if (RejectWhenTenantsLocked("Remove tenant"))
+        {
+            return;
+        }
+
+        var accounts = node.Accounts.Select(a => a.Account).ToList();
+        if (accounts.Count > 0 && (_accountsHost is null || !await _accountsHost.RemoveAccountsAsync(accounts)))
+        {
+            return;
+        }
+
+        var existing = _registrations.FirstOrDefault(r => SlotOf(r)?.Key == node.Key);
+        if (existing is not null)
+        {
+            try
+            {
+                LocalConfigStore.RemoveTenantRegistration(AppPaths.LocalConfigFile, node.Cloud, node.TenantId);
+            }
+            catch (Exception ex)
+            {
+                // The accounts are already gone at this point, so a log line alone would leave
+                // the user looking at an emptied card that silently refuses to go away.
+                _logger.LogError(ex, "Failed to remove the App Registration for cloud {Cloud}, tenant {TenantId}", node.Cloud, node.TenantId);
+                var detail = accounts.Count > 0
+                    ? "Its accounts were removed, but its App Registration could not be removed from appsettings.local.json."
+                    : "Its App Registration could not be removed from appsettings.local.json.";
+                _toastService.ShowError("Remove tenant", $"{detail} Check that the file is writable and valid JSON, then try again.");
+                return;
+            }
+
+            _registrations.Remove(existing);
+            ShowRestartPrompt = true;
+            _logger.LogInformation(
+                "App Registration removed for cloud {Cloud}, tenant {TenantId}; awaiting restart.",
+                node.Cloud,
+                node.TenantId);
+        }
+
+        // Unconditionally: a ticket-system save still queued behind the store's lock would land
+        // after a check of Current and outlive the tenant. Nothing to clear writes nothing.
+        await SaveTicketSystemAsync(node.TenantId, null);
+
+        SyncTenantNodes();
+    }
+
+    /// <summary>Opens the sign-in slide-in with this tenant already chosen.</summary>
+    private void AddAccountToNode(TenantNodeViewModel node)
+        => _accountsHost?.OpenAddAccountPanelCommand.Execute(node.Slot);
+
+    /// <summary>
+    /// Adds a tenant nobody has configured yet. Editing an existing one happens in its
+    /// own card — its tenant id and cloud are its identity, so changing either is a
+    /// removal and an addition, not an edit.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanAddRegistration))]
+    private async Task AddTenantAsync()
+    {
+        var cloud = NewTenantCloud.Cloud;
+        var tenantId = Guid.Parse(NewTenantId.Trim()).ToString();
+
+        // Not null: the command only enables once it resolves (CanAddRegistration).
+        var clientId = NewClientIdResolved()!;
+        var label = string.IsNullOrWhiteSpace(NewLabel) ? null : NewLabel.Trim();
+
+        try
+        {
+            LocalConfigStore.SaveTenantRegistration(
+                AppPaths.LocalConfigFile,
+                new TenantAppRegistration { TenantId = tenantId, ClientId = clientId, Cloud = cloud.ToString(), Label = label });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to save the App Registration for cloud {Cloud}, tenant {TenantId}", cloud, tenantId);
+            return;
+        }
+
+        // Never an existing slot: CanAddRegistration refuses a tenant that is configured.
+        _registrations.Add(new TenantAppRegistration { TenantId = tenantId, ClientId = clientId, Cloud = cloud.ToString(), Label = label });
+
+        // Not part of the registration file — see NewTicketSystem. Saved after the
+        // registration write so a failed write never leaves a half-applied form, and
+        // awaited before SyncTenantNodes, which reads it back.
+        var ticketSystem = string.IsNullOrWhiteSpace(NewTicketSystem) ? null : NewTicketSystem.Trim();
+
+        ClearForm();
+        ShowRestartPrompt = true;
+        _logger.LogInformation(
+            "App Registration saved for cloud {Cloud}, tenant {TenantId}; awaiting restart.",
+            cloud,
+            tenantId);
+        await SaveTicketSystemAsync(tenantId, ticketSystem);
+        SyncTenantNodes();
+    }
+
+    [RelayCommand]
+    private async Task ChooseOrRemoveLogoAsync()
+    {
+        LogoError = null;
+        try
+        {
+            if (Logo is not null)
+            {
+                File.Delete(AppPaths.LogoFile);
+                Logo = null;
+                return;
+            }
+
+            var path = PickLogoRequested is null ? null : await PickLogoRequested();
+            if (path is null)
+            {
+                return;
+            }
+
+            // Read once and asynchronously: a file still downloading (OneDrive, a share) must
+            // not freeze the popup, and the bytes written are the bytes checked. Unlike
+            // File.Copy, writing them carries no read-only attribute over and copes with
+            // picking logo.png itself.
+            var png = await File.ReadAllBytesAsync(path);
+
+            // Decode before writing, so a file the app cannot show is turned down here,
+            // with a message, instead of becoming a log line at every start.
+            var logo = LoadLogo(() => new MemoryStream(png));
+            if (logo is null)
+            {
+                LogoError = "This file is not a PNG the app can read.";
+                return;
+            }
+
+            await File.WriteAllBytesAsync(AppPaths.LogoFile, png);
+            Logo = logo;
+        }
+        catch (Exception ex)
+        {
+            // Includes the file dialog failing: a cosmetic setting must never take the
+            // tray app down with it.
+            _logger.LogWarning(ex, "Could not change logo.png");
+            LogoError = "The logo could not be changed — see the log for details.";
+        }
+    }
+
+    /// <summary>
+    /// Launches a fresh process from the current executable and shuts the
+    /// running one down. Used after <see cref="SaveRegistration"/> so the new
+    /// configuration is picked up via <c>appsettings.local.json</c>. The
+    /// <see cref="Program.RestartArgument"/> makes the replacement wait for
+    /// this process to release the single-instance mutex instead of treating
+    /// it as an already-running instance and exiting.
+    /// </summary>
+    [RelayCommand]
+    private void RestartApp()
+    {
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                Process.Start(new ProcessStartInfo(exePath, Program.RestartArgument) { UseShellExecute = true });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start the replacement process for restart");
+        }
+
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+        }
+    }
+
+    /// <summary>
+    /// Opens the folder holding the rolling Serilog files in the OS file manager.
+    /// Path must match the sink configured in <c>App.BuildHost</c>:
+    /// <c>%LocalAppData%\ModernWorkElevate\logs</c>. The directory is created at
+    /// startup, so it normally exists; we create it defensively in case logging
+    /// failed to initialize.
+    /// </summary>
+    [RelayCommand]
+    private void OpenLog()
+    {
+        try
+        {
+            Directory.CreateDirectory(LogDirectory);
+            Process.Start(new ProcessStartInfo(LogDirectory) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open the log folder at {LogDirectory}", LogDirectory);
+        }
+    }
+
+    /// <summary>
+    /// Asks the updater to look at GitHub right now, and reports what came back.
+    /// A found update surfaces the normal update prompt (with its install / later
+    /// choice) through <see cref="Tray.UpdateController"/>; every other outcome is
+    /// only ever visible here, which is why each one gets its own sentence.
+    /// </summary>
+    /// <remarks>
+    /// The four "nothing to install" outcomes are deliberately not collapsed into
+    /// one message. A release held back by the age gate, and a check that never
+    /// reached GitHub, both look like "up to date" from the outside — and a user
+    /// who was told that stops looking, which is the failure this wording exists
+    /// to prevent.
+    /// </remarks>
+    [RelayCommand]
+    private async Task CheckForUpdatesNow()
+    {
+        if (CheckForUpdatesRequested is not { } handler)
+        {
+            return;
+        }
+
+        IsUpdateCheckRunning = true;
+        UpdateCheckStatus = string.Empty;
+        try
+        {
+            var outcome = await handler.Invoke();
+            UpdateCheckStatus = outcome switch
+            {
+                UpdateCheckOutcome.UpdateAvailable => "An update is available — see the update window.",
+                UpdateCheckOutcome.UpToDate => "You are running the latest version.",
+                UpdateCheckOutcome.Deferred => "A newer version exists but is not offered yet: releases are"
+                    + " held back for 72 hours so security tools can classify them first.",
+                UpdateCheckOutcome.Failed => "Could not reach GitHub. Check the connection and try again.",
+                _ => "Updates only work in an installed version, not in a portable or development build.",
+            };
+        }
+        finally
+        {
+            IsUpdateCheckRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// Probes every endpoint the app and the Windows sign-in window need and
+    /// renders the per-endpoint results. Built for the field case where the
+    /// WAM window stays blank in a locked-down network: the report proves
+    /// whether the environment blocks a required endpoint.
+    /// </summary>
+    [RelayCommand]
+    private async Task RunNetworkCheck()
+    {
+        IsNetworkCheckRunning = true;
+        ReportCopied = false;
+        try
+        {
+            using var cts = new CancellationTokenSource(NetworkCheckTimeout);
+            var report = await _networkDiagnostics.RunAsync(cts.Token);
+            NetworkCheckGroups = [.. report.Groups.Select(g => new NetworkCheckGroupViewModel(g))];
+            HasNetworkCheckResults = true;
+
+            // Entry-assembly version, same source as the footer label.
+            var version = Assembly.GetEntryAssembly()?.GetName().Version;
+            var appVersion = version is null ? "?" : $"{version.Major}.{version.Minor}.{version.Build}";
+            _lastNetworkReportText = NetworkDiagnosticsReportFormatter.Format(
+                report,
+                appVersion,
+                Environment.OSVersion.VersionString);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Network check failed");
+        }
+        finally
+        {
+            IsNetworkCheckRunning = false;
+        }
+    }
+
+    /// <summary>Puts the last report on the clipboard via <see cref="CopyReportRequested"/>.</summary>
+    [RelayCommand]
+    private async Task CopyNetworkReport()
+    {
+        if (_lastNetworkReportText is null || CopyReportRequested is not { } handler)
+        {
+            return;
+        }
+
+        ReportCopied = false;
+        try
+        {
+            await handler.Invoke(_lastNetworkReportText);
+            ReportCopied = true;
+        }
+        catch (Exception ex)
+        {
+            // The clipboard can be held by another process; no "Copied" is the user's signal.
+            _logger.LogWarning(ex, "Copying the network report failed");
+        }
+    }
+
+    partial void OnIsOpenChanged(bool value) => OnPropertyChanged(nameof(PanelOffsetX));
+
+    // China switches the form to self-hosted; back on Global, shared-hosted is preselected again.
+    partial void OnNewTenantCloudChanged(CloudOption value) => NewIsSharedHosted = IsSharedHostedPreselected(value.Cloud);
+
+    partial void OnSelectedThemeChanged(ThemeOption value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        if (Application.Current is { } app)
+        {
+            app.RequestedThemeVariant = ThemeMapper.ToVariant(value.Value);
+        }
+
+        SchedulePersist();
+    }
+
+    partial void OnStartWithWindowsChanged(bool value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        try
+        {
+            if (value)
+            {
+                _autostart.Enable();
+            }
+            else
+            {
+                _autostart.Disable();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to apply autostart toggle from settings panel");
+        }
+
+        // Autostart isn't part of the persisted UserSettings record (registry is
+        // the source of truth) — no UpdateAsync call needed here.
+    }
+
+    partial void OnCreateStartMenuShortcutChanged(bool value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        if (value)
+        {
+            _shortcuts.EnableStartMenuShortcut();
+        }
+        else
+        {
+            _shortcuts.DisableStartMenuShortcut();
+        }
+
+        // Like autostart, the shortcut file itself is the source of truth — it is
+        // not mirrored into the persisted UserSettings record, so no UpdateAsync here.
+    }
+
+    partial void OnSelectedDurationChanged(DurationOption value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        SchedulePersist();
+    }
+
+    partial void OnExpiryWarningEnabledChanged(bool value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        SchedulePersist();
+    }
+
+    partial void OnAutomaticUpdatesEnabledChanged(bool value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        SchedulePersist();
+    }
+
+    partial void OnSelectedExpiryThresholdChanged(ExpiryThresholdOption value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        SchedulePersist();
+    }
+
+    partial void OnSelectedLogLevelChanged(LogLevelOption value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        SchedulePersist();
+    }
+
+    partial void OnIsTenantsSectionExpandedChanged(bool value)
+    {
+        if (_suppressPersist)
+        {
+            return;
+        }
+
+        SchedulePersist();
+    }
+
+    [RelayCommand]
+    private void ToggleTenantsSection()
+    {
+        // The field first: setting the property runs the change handler, which persists
+        // synchronously up to its first await — so assigning afterwards would write the
+        // value from before this toggle and leave the preference one click behind.
+        _persistedTenantsExpanded = !IsTenantsSectionExpanded;
+        IsTenantsSectionExpanded = _persistedTenantsExpanded;
+    }
+
+    [RelayCommand]
+    private void Close()
+    {
+        IsOpen = false;
+        Closed?.Invoke();
+    }
+
+    private bool IsSharedHostedPreselected(EntraCloud cloud) => IsHostingChoiceAvailable && cloud == EntraCloud.Global;
+
+    /// <summary>The client id the form would add, or <c>null</c> when the chosen way yields none.</summary>
+    private string? NewClientIdResolved() => _options.ResolveClientId(
+        NewIsSharedHosted ? AppRegistrationHosting.SharedHosted : AppRegistrationHosting.SelfHosted,
+        NewTenantCloud.Cloud,
+        NewClientId);
+
+    private void ClearForm()
+    {
+        NewTenantId = string.Empty;
+        NewClientId = string.Empty;
+        NewLabel = string.Empty;
+        NewTicketSystem = string.Empty;
+        NewTenantCloud = CloudOptions[0];
+
+        // Set here too: the cloud handler does not run when the cloud was already Global.
+        NewIsSharedHosted = IsSharedHostedPreselected(NewTenantCloud.Cloud);
+    }
+
+    /// <summary>
+    /// Stores (or clears, when blank) the tenant's ticketing system. Keyed by tenant
+    /// id alone — a tenant lives in exactly one cloud, so the cloud adds nothing.
+    /// </summary>
+    private Task SaveTicketSystemAsync(string tenantId, string? ticketSystem)
+        => SaveSettingsAsync(current => current.WithTicketSystem(tenantId, ticketSystem));
+
+    private void SchedulePersist()
+    {
+        // Fire-and-forget — the partial void handlers run on the UI thread
+        // and can't be async themselves. PersistAsync swallows errors and
+        // logs so a transient IO failure doesn't crash the dispatcher.
+        _ = PersistAsync();
+    }
+
+    private async Task PersistAsync()
+    {
+        // The panel's own fields only, read now on the UI thread. The transform applies them to
+        // the latest settings under the store's lock, so a shell write queued ahead of this one
+        // (last-used account, pins, Verified marks) is kept instead of reverted.
+        var theme = SelectedTheme.Value;
+        var durationHours = SelectedDuration.Hours;
+        var expiryWarningEnabled = ExpiryWarningEnabled;
+        var expiryWarningMinutes = SelectedExpiryThreshold.Minutes;
+        var tenantsExpanded = _persistedTenantsExpanded;
+        var automaticUpdatesEnabled = AutomaticUpdatesEnabled;
+        var logLevel = SelectedLogLevel.Value;
+
+        await SaveSettingsAsync(current => current with
+        {
+            Theme = theme,
+            DefaultDurationHours = durationHours,
+            ExpiryWarningEnabled = expiryWarningEnabled,
+            ExpiryWarningMinutes = expiryWarningMinutes,
+            SettingsAccountsExpanded = tenantsExpanded,
+            AutomaticUpdatesEnabled = automaticUpdatesEnabled,
+            LogLevel = logLevel,
+        }).ConfigureAwait(false);
+    }
+
+    private async Task SaveSettingsAsync(Func<UserSettings, UserSettings> transform)
+    {
+        try
+        {
+            await _userSettings.UpdateAsync(transform).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to persist user settings from the settings panel");
+        }
+    }
+
+    private Bitmap? LoadLogo(Func<Stream> open)
+    {
+        try
+        {
+            using var stream = open();
+            return Bitmap.DecodeToHeight(stream, LogoDecodeHeight);
+        }
+        catch (Exception ex)
+        {
+            // Branding is decoration: a locked, truncated or non-PNG file costs the
+            // logo, never the start of a privileged-access tool.
+            _logger.LogWarning(ex, "Logo file could not be read; showing no logo");
+            return null;
+        }
+    }
+
+    /// <summary>ComboBox row: pairs the <see cref="EntraCloud"/> value with the label shown to the user.</summary>
+    public sealed record CloudOption(EntraCloud Cloud, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>ComboBox row: pairs the <see cref="ThemePreference"/> value with the label shown to the user.</summary>
+    public sealed record ThemeOption(ThemePreference Value, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>ComboBox row: pairs the <see cref="LogLevelPreference"/> value with the label shown to the user.</summary>
+    public sealed record LogLevelOption(LogLevelPreference Value, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>ComboBox row: pairs the default duration in hours with the label shown to the user.</summary>
+    public sealed record DurationOption(double Hours, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    /// <summary>ComboBox row: pairs the expiry-warning threshold (minutes) with the label shown to the user.</summary>
+    public sealed record ExpiryThresholdOption(int Minutes, string Label)
+    {
+        public override string ToString() => Label;
+    }
+}

@@ -1,0 +1,164 @@
+namespace ModernWorkElevate.Core.Services;
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using ModernWorkElevate.Core.Configuration;
+
+/// <summary>
+/// JSON-backed implementation of <see cref="IUserSettingsService"/>. Mirrors
+/// <see cref="JustificationFavoritesStore"/>: in-process semaphore, atomic
+/// write via temp-file + rename, graceful fall-back to
+/// <see cref="UserSettings.Default"/> on a missing or corrupt file. A file that
+/// cannot be read is shown as the defaults but never overwritten with them.
+/// </summary>
+/// <remarks>
+/// The file is not encrypted — it lives in the user's per-user
+/// <c>%LocalAppData%</c> directory which is already isolated by Windows. The
+/// stored fields are non-sensitive preferences (theme choice, default
+/// duration, toast settings); no tokens or PII go through this store.
+/// </remarks>
+public sealed class UserSettingsService : IUserSettingsService
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private readonly string _filePath;
+    private readonly ILogger<UserSettingsService> _logger;
+    private readonly SemaphoreSlim _ioLock = new(1, 1);
+    private UserSettings _current = UserSettings.Default;
+
+    // False while Current holds the defaults because the file could not be read: the next
+    // update reads it first instead of writing the defaults over it.
+    private bool _loaded;
+
+    public UserSettingsService(string filePath, ILogger<UserSettingsService> logger)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        ArgumentNullException.ThrowIfNull(logger);
+        _filePath = filePath;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public event Action<UserSettings>? Changed;
+
+    /// <inheritdoc />
+    public UserSettings Current => _current;
+
+    /// <inheritdoc />
+    public async Task LoadAsync(CancellationToken ct = default)
+    {
+        await _ioLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            _current = await ReadAsync(ct).ConfigureAwait(false);
+            _loaded = true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "User settings file at {Path} could not be read; showing defaults", _filePath);
+        }
+        finally
+        {
+            _ioLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task UpdateAsync(Func<UserSettings, UserSettings> transform, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+
+        UserSettings updated;
+        await _ioLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_loaded)
+            {
+                _current = await ReadAsync(ct).ConfigureAwait(false);
+                _loaded = true;
+            }
+
+            // The latest value, read under the lock: a save queued ahead of this one has
+            // already published, so its change is the base here instead of being reverted.
+            var current = _current;
+            updated = transform(current);
+            if (ReferenceEquals(updated, current))
+            {
+                return;
+            }
+
+            // Published before the write, not after. Most callers save fire-and-forget and
+            // then immediately compose their next change from Current — publishing late
+            // hands them the previous value, and their write silently reverts this one.
+            // If the file write then fails it is logged, and memory is ahead of disk for
+            // one session; a stale read is the worse of the two.
+            _current = updated;
+            await WriteAsync(updated, ct).ConfigureAwait(false);
+            _logger.LogInformation(
+                "User settings saved (theme {Theme}, durationHours {Duration}, expiryWarn {ExpiryEnabled} @ {ExpiryMin}m)",
+                updated.Theme,
+                updated.DefaultDurationHours,
+                updated.ExpiryWarningEnabled,
+                updated.ExpiryWarningMinutes);
+        }
+        finally
+        {
+            _ioLock.Release();
+        }
+
+        // Fire Changed outside the lock so subscribers that re-enter the
+        // service (defensive) can't deadlock against us.
+        Changed?.Invoke(updated);
+    }
+
+    private async Task<UserSettings> ReadAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_filePath))
+        {
+            return UserSettings.Default;
+        }
+
+        try
+        {
+            await using var stream = await RetryingFile.OpenReadAsync(_filePath, ct).ConfigureAwait(false);
+            var settings = await JsonSerializer
+                .DeserializeAsync<UserSettings>(stream, JsonOptions, ct)
+                .ConfigureAwait(false);
+            return settings ?? UserSettings.Default;
+        }
+        catch (JsonException ex)
+        {
+            // Only corrupt content falls back; a failed read throws rather than seed a write.
+            _logger.LogWarning(
+                ex,
+                "User settings file at {Path} is corrupt; falling back to defaults",
+                _filePath);
+            return UserSettings.Default;
+        }
+    }
+
+    private async Task WriteAsync(UserSettings settings, CancellationToken ct)
+    {
+        var directory = Path.GetDirectoryName(_filePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        // Atomic temp-file write — crash mid-serialise leaves the previous
+        // settings.json untouched.
+        var tempPath = _filePath + ".tmp";
+        await using (var stream = File.Create(tempPath))
+        {
+            await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, ct).ConfigureAwait(false);
+        }
+
+        File.Move(tempPath, _filePath, overwrite: true);
+    }
+}

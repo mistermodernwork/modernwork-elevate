@@ -1,0 +1,6 @@
+<Project>
+  <!--
+    Bewusst leer: verhindert, dass die Directory.Build.props im Repository-Root
+    (StyleCop-Paketverweis, C#-Einstellungen) in das WiX-Projekt importiert wird.
+  -->
+</Project>

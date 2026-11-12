@@ -1,0 +1,80 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ModernWorkElevate.AppAvalonia.ViewModels"
+        x:Class="ModernWorkElevate.AppAvalonia.Views.ExpiryAlertWindow"
+        x:DataType="vm:ExpiryAlertViewModel"
+        Title="ModernWork Elevate — expiring soon"
+        Width="340"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="Manual"
+        WindowDecorations="BorderOnly"
+        TransparencyLevelHint="None"
+        Background="{DynamicResource SurfaceBaseBrush}"
+        Topmost="True">
+
+  <!-- Rounded shell with drop shadow — matches the tray popup's lifted look. -->
+  <Border Background="{DynamicResource SurfaceBaseBrush}">
+    <StackPanel Margin="16,14" Spacing="9">
+
+      <!-- Header: warning glyph + title -->
+      <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <TextBlock Classes="glyph" Text="&#xE7BA;" FontSize="17" Foreground="{DynamicResource WarningBrush}" />
+        <TextBlock Text="Activation expiring soon"
+                   FontSize="{DynamicResource FontSubtitle}"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource TextPrimaryBrush}" />
+      </StackPanel>
+
+      <!-- The role / group at risk -->
+      <TextBlock Text="{Binding ResourceName}"
+                 FontSize="{DynamicResource FontBody}"
+                 FontWeight="Bold"
+                 TextTrimming="CharacterEllipsis"
+                 Foreground="{DynamicResource TextPrimaryBrush}" />
+
+      <!-- Which enrollment it belongs to -->
+      <TextBlock Text="{Binding ContextLabel}"
+                 FontSize="{DynamicResource FontSmall}"
+                 TextTrimming="CharacterEllipsis"
+                 Foreground="{DynamicResource TextSecondaryBrush}" />
+
+      <!-- Azure resource roles only: "Owner" is ambiguous while the same role is
+           active on several scopes, which is exactly when this alert fires twice. -->
+      <TextBlock Text="{Binding ScopeLabel}"
+                 FontSize="{DynamicResource FontSmall}"
+                 TextTrimming="CharacterEllipsis"
+                 Foreground="{DynamicResource TextTertiaryBrush}"
+                 IsVisible="{Binding ScopeLabel,
+                                     Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+      <!-- Live countdown, coloured by urgency via the shared converter -->
+      <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,2,0,0">
+        <TextBlock Text="Expires in"
+                   FontSize="{DynamicResource FontSmall}"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource TextSecondaryBrush}" />
+        <TextBlock Text="{Binding RemainingText}"
+                   FontSize="{DynamicResource FontTitleSmall}"
+                   FontWeight="Bold"
+                   VerticalAlignment="Center"
+                   Foreground="{Binding RemainingTime,
+                                        Converter={x:Static vm:RemainingTimeToBrushConverter.Instance}}" />
+      </StackPanel>
+
+      <!-- Only shown when several assignments are inside the window at once -->
+      <TextBlock Text="{Binding AdditionalText}"
+                 IsVisible="{Binding HasAdditional}"
+                 FontSize="{DynamicResource FontSmall}"
+                 Foreground="{DynamicResource TextTertiaryBrush}" />
+
+      <!-- Actions -->
+      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Margin="0,4,0,0">
+        <Button Classes="ghost" Content="Dismiss" Click="OnDismissClick" />
+        <Button Classes="ghost" Content="Extend time" Click="OnReactivateClick" />
+        <Button Classes="secondary" Content="Open" Click="OnOpenClick" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

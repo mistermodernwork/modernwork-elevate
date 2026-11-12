@@ -1,0 +1,153 @@
+namespace ModernWorkElevate.Tests.Configuration;
+
+using System.Text.Json;
+using ModernWorkElevate.Core.Auth;
+using ModernWorkElevate.Core.Configuration;
+
+/// <summary>
+/// The store does a read-modify-write on the per-user config file. Losing a
+/// sibling key here costs the user hand-edited settings with no error to show
+/// for it, and a duplicate entry would stop the app at ValidateOnStart.
+/// </summary>
+public sealed class LocalConfigStoreTests : IDisposable
+{
+    private const string GlobalAppId = "8f3a1c2e-0000-4000-8000-000000000001";
+    private const string ChinaAppId = "8f3a1c2e-0000-4000-8000-000000000002";
+    private const string TenantA = "7b1c4d2e-0000-4000-8000-0000000000aa";
+    private const string TenantB = "7b1c4d2e-0000-4000-8000-0000000000bb";
+
+    private readonly string _directory = Path.Combine(
+        Path.GetTempPath(),
+        "ModernWork Elevate-LocalConfigStore-" + Guid.NewGuid());
+
+    private readonly string _filePath;
+
+    public LocalConfigStoreTests()
+        => _filePath = Path.Combine(_directory, "nested", "appsettings.local.json");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_directory))
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void SaveTenantRegistration_CreatesTheFileAndPreservesSiblings()
+    {
+        const string existing = """
+            {
+              "ModernWorkElevate": { "SomeFutureKey": true },
+              "Serilog": { "MinimumLevel": "Debug" }
+            }
+            """;
+        Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
+        File.WriteAllText(_filePath, existing);
+
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, GlobalAppId, "global", "Contoso"));
+
+        var root = JsonDocument.Parse(File.ReadAllText(_filePath)).RootElement;
+        Assert.True(root.GetProperty("ModernWorkElevate").GetProperty("SomeFutureKey").GetBoolean());
+        Assert.Equal("Debug", root.GetProperty("Serilog").GetProperty("MinimumLevel").GetString());
+
+        var entry = Assert.Single(ReadTenantRegistrations());
+        Assert.Equal(TenantA, entry.TenantId);
+        Assert.Equal(GlobalAppId, entry.ClientId);
+        Assert.Equal("Global", entry.Cloud);
+        Assert.Equal("Contoso", entry.Label);
+    }
+
+    [Fact]
+    public void SaveTenantRegistration_CreatesTheDirectoryWhenMissing()
+    {
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, GlobalAppId, "Global", null));
+
+        Assert.Single(ReadTenantRegistrations());
+    }
+
+    [Fact]
+    public void SaveTenantRegistration_ReplacesTheEntryForTheSameCloudAndTenant()
+    {
+        // Saving a known tenant is how the user corrects a client id or label —
+        // the list must never end up with two entries for one tenant.
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, GlobalAppId, "Global", "Contoso"));
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantB, ChinaAppId, "Global", null));
+
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA.ToUpperInvariant(), ChinaAppId, "Global", null));
+
+        var entries = ReadTenantRegistrations();
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(ChinaAppId, entries[0].ClientId);
+        Assert.Null(entries[0].Label);
+        Assert.Equal(TenantB, entries[1].TenantId);
+    }
+
+    [Fact]
+    public void RemoveTenantRegistration_RemovesOnlyTheMatchingEntry()
+    {
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, GlobalAppId, "Global", null));
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, ChinaAppId, "China", null));
+
+        LocalConfigStore.RemoveTenantRegistration(_filePath, EntraCloud.Global, TenantA);
+        LocalConfigStore.RemoveTenantRegistration(_filePath, EntraCloud.Global, TenantB);
+
+        var entry = Assert.Single(ReadTenantRegistrations());
+        Assert.Equal("China", entry.Cloud);
+    }
+
+    [Fact]
+    public void SaveTenantRegistration_WritesWhatClientIdForReadsBack()
+    {
+        // Guards the writer ↔ binder contract: the shape written here must be
+        // what the options resolver looks for.
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, GlobalAppId, "Global", null));
+
+        var options = new ModernWorkElevateOptions { TenantAppRegistrations = ReadTenantRegistrations() };
+
+        Assert.Equal(GlobalAppId, options.ClientIdFor(EntraCloud.Global, TenantA));
+        Assert.Null(options.ClientIdFor(EntraCloud.Global, TenantB));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    public void SaveTenantRegistration_AClientIdThatIsNotAGuid_IsNeverWritten(string clientId)
+    {
+        // The validator rejects it at the next start and the app closes without a window.
+        Assert.Throws<ArgumentException>(() => LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, clientId, "Global", null)));
+
+        Assert.False(File.Exists(_filePath));
+    }
+
+    [Fact]
+    public void SaveTenantRegistration_ANewTenant_LeavesTheOtherEntriesByteIdentical()
+    {
+        // Adding a shared-hosted tenant must not touch anyone's existing entries.
+        const string tenantC = "7b1c4d2e-0000-4000-8000-0000000000cc";
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantA, GlobalAppId, "Global", "Contoso"));
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(TenantB, ChinaAppId, "China", null));
+        var before = EntriesAsJson();
+
+        LocalConfigStore.SaveTenantRegistration(_filePath, Pinned(tenantC, "5d0c1f2e-0000-4000-8000-0000000000f1", "Global", null));
+
+        var after = EntriesAsJson();
+        Assert.Equal(3, after.Count);
+        Assert.Equal(before, after.Take(2));
+    }
+
+    private static TenantAppRegistration Pinned(string tenantId, string clientId, string cloud, string? label)
+        => new() { TenantId = tenantId, ClientId = clientId, Cloud = cloud, Label = label };
+
+    private List<TenantAppRegistration> ReadTenantRegistrations()
+        => JsonDocument.Parse(File.ReadAllText(_filePath))
+            .RootElement
+            .GetProperty("ModernWorkElevate")
+            .GetProperty("TenantAppRegistrations")
+            .Deserialize<List<TenantAppRegistration>>()!;
+
+    private List<string> EntriesAsJson()
+        => [.. System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(_filePath))!["ModernWorkElevate"]!["TenantAppRegistrations"]!
+            .AsArray()
+            .Select(entry => entry!.ToJsonString())];
+}

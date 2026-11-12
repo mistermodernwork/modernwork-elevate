@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ModernWork Elevate – MSI-Definition (WiX v5), per-machine nach
+  C:\Program Files\ModernWork Elevate. Standardbenutzer haben dort nur Lese-/Ausführrechte,
+  die App kann sich also weder selbst ändern noch von Malware im Benutzerkontext
+  ausgetauscht werden (Voraussetzung für AppLocker/WDAC-Pfad- und Herausgeberregeln).
+
+  Eigenschaften (alle optional):
+    AUTOSTART=1          Autostart für alle Benutzer (HKLM\...\Run). Ohne diese Eigenschaft schaltet
+                         die App beim ersten Start pro Benutzer den Autostart in HKCU ein; der
+                         Benutzer kann ihn im Tray-Menü abschalten.
+    SKIPRUNTIMECHECK=1   Prüfung auf .NET Runtime ≥ 10 überspringen (z. B. Tasksequenz, Runtime folgt).
+
+  Voraussetzung: Windows 11 25H2 (Build 26200) oder neuer – Launch Condition, nicht überspringbar.
+  Konfiguration (Tenants, Device Code, Token-Cache) gehört in die Richtlinie
+  (packaging\policy\ModernWorkElevate.admx bzw. HKLM\SOFTWARE\Policies\ModernWorkElevate), nicht ins MSI.
+
+  Silent:     msiexec /i ModernWorkElevate-<Version>-x64.msi /qn /norestart /l*v "%TEMP%\ModernWorkElevate-install.log"
+  Upgrade:    neueres MSI genauso installieren (Major Upgrade, Einstellungen der Benutzer bleiben).
+  Uninstall:  msiexec /x {ProductCode} /qn /norestart
+              Benutzerdaten in %APPDATA% / %LOCALAPPDATA% bleiben; Entfernen pro Benutzer mit
+              packaging\scripts\Remove-ModernWorkElevateUserData.ps1 (startet die App mit dem Schalter "remove-user-data").
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="ModernWork Elevate"
+           Manufacturer="ModernWork Elevate"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="91068A6E-A327-4F71-B53E-C7D961B20913"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500"
+           Language="1033">
+
+    <SummaryInformation Description="ModernWork Elevate - activate Microsoft Entra PIM roles, groups and Azure resource roles from the notification area" />
+
+    <!-- In-Place-Upgrade: neue Version ersetzt die alte, Downgrade wird verhindert. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="AppIcon" SourceFile="..\..\src\ModernWorkElevate.App.Avalonia\Assets\app-icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <!-- ===================================================== Öffentliche Eigenschaften -->
+    <Property Id="AUTOSTART" Secure="yes" />
+    <Property Id="SKIPRUNTIMECHECK" Secure="yes" />
+
+    <!-- AUTOSTART der Vorversion übernehmen ("Remember Property"-Muster). -->
+    <Property Id="SAVEDAUTOSTART" Secure="yes">
+      <RegistrySearch Id="SavedAutostart" Root="HKLM" Key="SOFTWARE\ModernWorkElevate" Name="Autostart" Type="raw" Bitness="always64" />
+    </Property>
+    <SetProperty Id="AUTOSTART" Value="[SAVEDAUTOSTART]" After="AppSearch" Sequence="first" Condition="NOT AUTOSTART AND SAVEDAUTOSTART" />
+
+    <!-- ===================================================== Voraussetzungen -->
+    <Property Id="WINDOWSBUILD">
+      <RegistrySearch Id="WindowsBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64" />
+    </Property>
+
+    <!-- .NET Runtime 10 oder neuer (Avalonia braucht keine Windows Desktop Runtime). -->
+    <Property Id="NETRUNTIME">
+      <DirectorySearch Id="NetRuntimeRoot" Path="[ProgramFiles64Folder]dotnet\shared\Microsoft.NETCore.App" Depth="1">
+        <FileSearch Id="NetRuntimeCoreLib" Name="System.Private.CoreLib.dll" MinVersion="10.0.0.0" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Mindestens Windows 11 25H2 (Build 26200). CurrentBuildNumber ist REG_SZ und wird als Zahl verglichen. -->
+    <Launch Condition="Installed OR (WINDOWSBUILD &gt;= 26200)"
+            Message="[ProductName] requires Windows 11 version 25H2 (build 26200) or later." />
+    <Launch Condition="Installed OR NETRUNTIME OR (SKIPRUNTIMECHECK = &quot;1&quot;)"
+            Message="[ProductName] requires the .NET Runtime 10 (or newer). Install it first or set SKIPRUNTIMECHECK=1." />
+
+    <!-- Laufende Instanzen bei Upgrade/Deinstallation beenden (alle Sitzungen). -->
+    <util:CloseApplication Id="CloseRunningInstances"
+                           Target="ModernWorkElevate.exe"
+                           CloseMessage="yes"
+                           ElevatedCloseMessage="yes"
+                           RebootPrompt="no"
+                           Timeout="5"
+                           TerminateProcess="1" />
+
+    <!-- ===================================================== Verzeichnisse -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="ModernWork Elevate" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- ===================================================== Features -->
+    <Feature Id="Main" Title="ModernWork Elevate" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="ProductRegistration" />
+      <ComponentRef Id="MachineAutostart" />
+    </Feature>
+
+    <!-- Hauptprogramm (fester Pfad, signiert – tauglich für WDAC/AppLocker). -->
+    <Component Id="MainExecutable" Directory="INSTALLFOLDER">
+      <File Id="MainExe" Source="$(var.PublishDir)ModernWorkElevate.exe" KeyPath="yes" />
+    </Component>
+
+    <!--
+      Startmenü-Verknüpfung als eigene Komponente (nicht angekündigt, also ohne MSI-Selbstreparatur beim Start).
+      KeyPath bewusst in HKLM: Das Paket ist immer per-machine (ALLUSERS=1, Startmenü "Alle Benutzer").
+      Ein HKCU-KeyPath würde im Profil des installierenden Kontos landen (bei SCCM/Intune: SYSTEM).
+      ICE38/ICE43/ICE57 stufen den Startmenü-Ordner pauschal als Benutzerprofil ein – für Per-Machine-Pakete
+      ein bekanntes False Positive; die drei ICEs sind im wixproj unterdrückt.
+    -->
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="807ABEAB-EB09-4CBD-AFD7-6CC8826A68D4">
+      <Shortcut Id="StartMenuShortcut"
+                Name="ModernWork Elevate"
+                Description="Activate Microsoft Entra PIM roles and groups"
+                Target="[INSTALLFOLDER]ModernWorkElevate.exe"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="AppIcon" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\ModernWorkElevate" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- Alle weiteren Dateien des Publish-Ordners (ohne PDBs), inkl. runtimes\win-*\native (Skia, HarfBuzz, msalruntime). -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)ModernWorkElevate.exe" />
+        <Exclude Files="$(var.PublishDir)**\*.pdb" />
+        <Exclude Files="$(var.PublishDir)appsettings.local.json" />
+      </Files>
+    </ComponentGroup>
+
+    <!-- Registrierung für Erkennungsregeln (SCCM/Intune) und Inventar. Getrennt vom Policy-Schlüssel. -->
+    <Component Id="ProductRegistration" Directory="INSTALLFOLDER">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\ModernWorkElevate">
+        <RegistryValue Name="Version" Type="string" Value="[ProductVersion]" KeyPath="yes" />
+        <RegistryValue Name="InstallPath" Type="string" Value="[INSTALLFOLDER]" />
+        <RegistryValue Name="Autostart" Type="string" Value="[AUTOSTART]" />
+      </RegistryKey>
+    </Component>
+
+    <!-- Maschinenweiter Autostart (alle Benutzer). Gleicher Wertname wie der HKCU-Eintrag der App;
+         doppelte Starts verhindert die Single-Instance-Sperre. -->
+    <Component Id="MachineAutostart" Directory="INSTALLFOLDER" Condition="AUTOSTART = &quot;1&quot;">
+      <RegistryValue Root="HKLM"
+                     Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+                     Name="ModernWork Elevate"
+                     Type="string"
+                     Value="&quot;[INSTALLFOLDER]ModernWorkElevate.exe&quot;"
+                     KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

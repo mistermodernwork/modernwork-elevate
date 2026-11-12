@@ -1,0 +1,34 @@
+# Build output (build.ps1 writes everything under artifacts/: publish folders, MSIs,
+# signature reports — never commit them; releases come from the tag workflow)
+artifacts/
+bin/
+obj/
+[Rr]eleases/
+*.user
+*.suo
+
+# Local config — never commit real tenant/client IDs
+appsettings.local.json
+
+# IDE
+.vs/
+.idea/
+*.DotSettings.user
+
+.scratch/
+
+# Packaging output
+packaging/**/output/
+packaging/msi/bin/
+packaging/msi/obj/
+*.nupkg
+
+# Test / coverage
+[Tt]est[Rr]esults/
+coverage*.xml
+*.coverage
+
+# Logs. The app writes its day-files under %LocalAppData%, but a log copied into the
+# working tree for diagnosis must never be committed: the lines carry tenant GUIDs and
+# object ids, and this repository is public.
+*.log

@@ -1,0 +1,158 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    Design tokens — 1.3 "Windows 11" redesign.
+
+    Direction: the panel should read as part of Windows 11, not as a web page in a window.
+      - Neutral Windows 11 surfaces (Mica-like base, white/raised cards, quiet strokes).
+      - The user's own Windows accent colour instead of a fixed brand purple. The accent
+        tokens below are only fallbacks: AccentPalette (Services/AccentPalette.cs) replaces
+        them at start-up and whenever the accent or the theme changes.
+      - Segoe UI Variable, the Windows 11 system font, with the Windows type ramp.
+      - Windows 11 geometry: 4 px for controls and list rows, 8 px for cards and layers.
+        The window itself is rounded by Windows (DWM), see Services/WindowChrome.cs.
+
+    Theme-dependent tokens live in ThemeDictionaries (Dark / Light); everything that is the
+    same in both themes stays at the top level. Every Color has a matching *Brush.
+  -->
+
+  <ResourceDictionary.ThemeDictionaries>
+
+    <!-- ============================================================ -->
+    <!-- DARK                                                          -->
+    <!-- ============================================================ -->
+    <ResourceDictionary x:Key="Dark">
+
+      <!-- Surfaces: base (window) < Surface1 (card) < Surface2 (hover) < Surface3 (pressed). -->
+      <Color x:Key="SurfaceBase">#202020</Color>
+      <Color x:Key="Surface1">#2B2B2B</Color>
+      <Color x:Key="Surface2">#353535</Color>
+      <Color x:Key="Surface3">#3D3D3D</Color>
+
+      <SolidColorBrush x:Key="SurfaceBaseBrush" Color="{StaticResource SurfaceBase}" />
+      <SolidColorBrush x:Key="Surface1Brush" Color="{StaticResource Surface1}" />
+      <SolidColorBrush x:Key="Surface2Brush" Color="{StaticResource Surface2}" />
+      <SolidColorBrush x:Key="Surface3Brush" Color="{StaticResource Surface3}" />
+
+      <!-- Hover idle: Surface2's RGB at alpha 0, so a BrushTransition only fades alpha
+           (Transparent is transparent WHITE and would flash on the way). -->
+      <SolidColorBrush x:Key="HoverIdleSurface2Brush" Color="#00353535" />
+
+      <Color x:Key="TextPrimary">#FFFFFF</Color>
+      <Color x:Key="TextSecondary">#C8C8C8</Color>
+      <Color x:Key="TextTertiary">#9D9D9D</Color>
+
+      <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimary}" />
+      <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}" />
+      <SolidColorBrush x:Key="TextTertiaryBrush" Color="{StaticResource TextTertiary}" />
+
+      <Color x:Key="BorderSubtle">#3A3A3A</Color>
+      <Color x:Key="BorderDivider">#303030</Color>
+
+      <SolidColorBrush x:Key="BorderSubtleBrush" Color="{StaticResource BorderSubtle}" />
+      <SolidColorBrush x:Key="BorderDividerBrush" Color="{StaticResource BorderDivider}" />
+
+      <!-- Accent fallbacks (Windows default blue), replaced by AccentPalette. -->
+      <SolidColorBrush x:Key="AccentBrush" Color="#4CC2FF" />
+      <SolidColorBrush x:Key="AccentHoverBrush" Color="#47B1E8" />
+      <SolidColorBrush x:Key="AccentForegroundBrush" Color="#000000" />
+      <SolidColorBrush x:Key="AccentTextBrush" Color="#99EBFF" />
+      <SolidColorBrush x:Key="AccentSoftBrush" Color="#4CC2FF" Opacity="0.16" />
+      <SolidColorBrush x:Key="SurfaceAccentBrush" Color="#4CC2FF" Opacity="0.12" />
+      <SolidColorBrush x:Key="AccentStrokeBrush" Color="#4CC2FF" Opacity="0.45" />
+
+      <!-- Status foregrounds tuned for dark surfaces (Windows 11 system palette). -->
+      <SolidColorBrush x:Key="SuccessBrush" Color="#6CCB5F" />
+      <SolidColorBrush x:Key="WarningBrush" Color="#FCE100" />
+      <SolidColorBrush x:Key="DangerBrush" Color="#FF99A4" />
+
+      <!-- Windows draws the window shadow; cards stay flat with a stroke. -->
+      <BoxShadows x:Key="ShadowCard">0 1 2 0 #33000000</BoxShadows>
+      <BoxShadows x:Key="ShadowActive">0 0 0 0 #00000000</BoxShadows>
+      <BoxShadows x:Key="ShadowPopup">0 0 0 0 #00000000</BoxShadows>
+    </ResourceDictionary>
+
+    <!-- ============================================================ -->
+    <!-- LIGHT                                                         -->
+    <!-- ============================================================ -->
+    <ResourceDictionary x:Key="Light">
+
+      <Color x:Key="SurfaceBase">#F3F3F3</Color>
+      <Color x:Key="Surface1">#FFFFFF</Color>
+      <Color x:Key="Surface2">#F0F0F0</Color>
+      <Color x:Key="Surface3">#E5E5E5</Color>
+
+      <SolidColorBrush x:Key="SurfaceBaseBrush" Color="{StaticResource SurfaceBase}" />
+      <SolidColorBrush x:Key="Surface1Brush" Color="{StaticResource Surface1}" />
+      <SolidColorBrush x:Key="Surface2Brush" Color="{StaticResource Surface2}" />
+      <SolidColorBrush x:Key="Surface3Brush" Color="{StaticResource Surface3}" />
+
+      <SolidColorBrush x:Key="HoverIdleSurface2Brush" Color="#00F0F0F0" />
+
+      <Color x:Key="TextPrimary">#1B1B1B</Color>
+      <Color x:Key="TextSecondary">#5C5C5C</Color>
+      <Color x:Key="TextTertiary">#707070</Color>
+
+      <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimary}" />
+      <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondary}" />
+      <SolidColorBrush x:Key="TextTertiaryBrush" Color="{StaticResource TextTertiary}" />
+
+      <Color x:Key="BorderSubtle">#E3E3E3</Color>
+      <Color x:Key="BorderDivider">#EBEBEB</Color>
+
+      <SolidColorBrush x:Key="BorderSubtleBrush" Color="{StaticResource BorderSubtle}" />
+      <SolidColorBrush x:Key="BorderDividerBrush" Color="{StaticResource BorderDivider}" />
+
+      <SolidColorBrush x:Key="AccentBrush" Color="#005FB8" />
+      <SolidColorBrush x:Key="AccentHoverBrush" Color="#0A6CC4" />
+      <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="AccentTextBrush" Color="#003E92" />
+      <SolidColorBrush x:Key="AccentSoftBrush" Color="#005FB8" Opacity="0.10" />
+      <SolidColorBrush x:Key="SurfaceAccentBrush" Color="#005FB8" Opacity="0.06" />
+      <SolidColorBrush x:Key="AccentStrokeBrush" Color="#005FB8" Opacity="0.35" />
+
+      <SolidColorBrush x:Key="SuccessBrush" Color="#0F7B0F" />
+      <SolidColorBrush x:Key="WarningBrush" Color="#9D5D00" />
+      <SolidColorBrush x:Key="DangerBrush" Color="#C42B1C" />
+
+      <BoxShadows x:Key="ShadowCard">0 1 2 0 #0F000000</BoxShadows>
+      <BoxShadows x:Key="ShadowActive">0 0 0 0 #00000000</BoxShadows>
+      <BoxShadows x:Key="ShadowPopup">0 0 0 0 #00000000</BoxShadows>
+    </ResourceDictionary>
+
+  </ResourceDictionary.ThemeDictionaries>
+
+  <!-- ============================================================ -->
+  <!-- Theme-independent tokens                                      -->
+  <!-- ============================================================ -->
+
+  <!-- Status wash backgrounds (pills, banners) — faint tints that work on both themes. -->
+  <Color x:Key="SuccessColor">#0F7B0F</Color>
+  <SolidColorBrush x:Key="SuccessSoftBrush" Color="#6CCB5F" Opacity="0.16" />
+
+  <Color x:Key="WarningColor">#F7B500</Color>
+  <SolidColorBrush x:Key="WarningSoftBrush" Color="#F7B500" Opacity="0.16" />
+
+  <Color x:Key="DangerColor">#E81123</Color>
+  <SolidColorBrush x:Key="DangerSoftBrush" Color="#E81123" Opacity="0.12" />
+  <SolidColorBrush x:Key="HoverIdleDangerBrush" Color="#00E81123" />
+
+  <!-- Typography: Windows 11 system font, with fallbacks for older builds / other hosts. -->
+  <FontFamily x:Key="AppFontFamily">Segoe UI Variable Text, Segoe UI, Inter</FontFamily>
+  <FontFamily x:Key="AppDisplayFontFamily">Segoe UI Variable Display, Segoe UI, Inter</FontFamily>
+  <FontFamily x:Key="ContentControlThemeFontFamily">Segoe UI Variable Text, Segoe UI, Inter</FontFamily>
+
+  <!-- Windows type ramp, compacted for a 400 px flyout. -->
+  <x:Double x:Key="FontCaption">11</x:Double>
+  <x:Double x:Key="FontSmall">12</x:Double>
+  <x:Double x:Key="FontBody">13</x:Double>
+  <x:Double x:Key="FontSubtitle">16</x:Double>
+  <x:Double x:Key="FontTitleSmall">20</x:Double>
+
+  <!-- Windows 11 geometry. -->
+  <CornerRadius x:Key="ControlCornerRadius">4</CornerRadius>
+  <CornerRadius x:Key="OverlayCornerRadius">8</CornerRadius>
+  <CornerRadius x:Key="CardCornerRadius">8</CornerRadius>
+
+</ResourceDictionary>

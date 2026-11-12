@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                           revision="1.0"
+                           schemaVersion="1.0"
+                           xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>ModernWork Elevate</displayName>
+  <description>Machine-wide settings for ModernWork Elevate.</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_ModernWorkElevate_1_2">ModernWork Elevate 1.2 or later on Windows 11 25H2 or later</string>
+      <string id="Cat_ModernWorkElevate">ModernWork Elevate</string>
+
+      <string id="Tenants">Pre-configured tenants and App Registrations</string>
+      <string id="Tenants_Help">Pre-configures the tenants users of this device can sign in to.
+
+Value name: the tenant (directory) ID, a GUID.
+Value: the application (client) ID of the App Registration to use in that tenant, optionally followed by ;Label and ;Cloud.
+
+Examples:
+  Value name 11111111-2222-3333-4444-555555555555, value aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  Value name 11111111-2222-3333-4444-555555555555, value aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee;Contoso;Global
+
+Cloud is Global (default) or China. An entry here replaces a tenant entry the user configured for the same tenant. Invalid entries are ignored and logged.
+
+If enabled: the listed tenants are available to every user; users may add further tenants unless "Lock the tenant list" is enabled.
+If disabled or not configured: users configure their tenants themselves.</string>
+
+      <string id="LockTenants">Lock the tenant list</string>
+      <string id="LockTenants_Help">If enabled, only the tenants from "Pre-configured tenants and App Registrations" are available. Tenants the user configured are ignored, and users cannot add, change or remove tenants.
+
+If disabled or not configured, users can add tenants in addition to the pre-configured ones.</string>
+
+
+    </stringTable>
+    <presentationTable>
+      <presentation id="Tenants">
+        <listBox refId="TenantsList">Tenants (value name = tenant ID, value = client ID[;label[;cloud]]):</listBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

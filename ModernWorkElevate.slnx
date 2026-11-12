@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ModernWorkElevate.App.Avalonia/ModernWorkElevate.App.Avalonia.csproj" />
+    <Project Path="src/ModernWorkElevate.Core/ModernWorkElevate.Core.csproj" />
+    <Project Path="src/ModernWorkElevate.Tests/ModernWorkElevate.Tests.csproj" />
+  </Folder>
+</Solution>

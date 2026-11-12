@@ -1,0 +1,130 @@
+name: Release
+
+# Builds the MSI installers on GitHub and publishes them as a GitHub Release.
+#
+# Trigger: push a tag that matches the version in Directory.Build.props, e.g.
+#   git tag v1.3.6
+#   git push origin v1.3.6
+# or run it manually (Actions → Release → Run workflow) to get the MSIs as a
+# workflow artifact without creating a release.
+#
+# Signing (optional): add two repository secrets
+#   SIGNING_CERT_PFX_BASE64   the code-signing certificate as base64-encoded .pfx
+#   SIGNING_CERT_PASSWORD     its password
+# Without them the MSIs are built unsigned (SmartScreen will warn; WDAC/AppLocker
+# environments need signed builds — see docs/code-signing-wdac.md).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Check tag matches version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          [xml] $props = Get-Content Directory.Build.props
+          $version = ($props.Project.PropertyGroup | Where-Object { $_['Version'] } | Select-Object -First 1)['Version'].InnerText
+          $tag = '${{ github.ref_name }}'.TrimStart('v')
+          if ($version -ne $tag) { throw "Tag v$tag does not match <Version>$version</Version> in Directory.Build.props." }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Import signing certificate
+        id: cert
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGNING_CERT_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:PFX_BASE64)) {
+            Write-Host 'No signing certificate configured - building unsigned.'
+            "thumbprint=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          $secure = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+          Remove-Item $pfx -Force
+          "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build x64 (tests, publish, sign, MSI)
+        shell: pwsh
+        run: |
+          # Hashtable, not array: splatting an array into a script binds '-Runtime' as a
+          # positional value (Configuration) instead of a parameter name.
+          $buildArgs = @{ Runtime = 'win-x64' }
+          if ('${{ steps.cert.outputs.thumbprint }}') {
+            $buildArgs.CertificateThumbprint = '${{ steps.cert.outputs.thumbprint }}'
+            $buildArgs.SignUnsignedDependencies = $true
+          }
+          ./build/build.ps1 @buildArgs
+
+      - name: Build ARM64
+        shell: pwsh
+        run: |
+          # Hashtable, not array: splatting an array into a script binds '-Runtime' as a
+          # positional value (Configuration) instead of a parameter name.
+          $buildArgs = @{ Runtime = 'win-arm64'; SkipTests = $true }
+          if ('${{ steps.cert.outputs.thumbprint }}') {
+            $buildArgs.CertificateThumbprint = '${{ steps.cert.outputs.thumbprint }}'
+            $buildArgs.SignUnsignedDependencies = $true
+          }
+          ./build/build.ps1 @buildArgs
+
+      - name: Package deployment kit
+        shell: pwsh
+        run: |
+          $kit = 'artifacts/release'
+          New-Item -ItemType Directory -Force -Path $kit | Out-Null
+          Copy-Item artifacts/msi/*.msi $kit
+          Copy-Item artifacts/msi/Detect-ModernWorkElevate.ps1 $kit
+          Copy-Item artifacts/msi/Remove-ModernWorkElevateUserData.ps1 $kit
+          Compress-Archive -Path packaging/policy/* -DestinationPath "$kit/ModernWorkElevate-PolicyTemplates.zip" -Force
+          Copy-Item artifacts/signature-report-*.csv $kit -ErrorAction SilentlyContinue
+          # Hash first, write after: in one pipeline Out-File creates SHA256SUMS.txt while
+          # Get-ChildItem is still listing, and Get-FileHash fails on the locked file.
+          $sums = Get-ChildItem $kit -File | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)  $($_.Name)"
+          }
+          $sums | Out-File "$kit/SHA256SUMS.txt" -Encoding ascii
+          Get-ChildItem $kit | Format-Table Name, Length
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: modernwork-elevate-msi
+          path: artifacts/release/*
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ModernWork Elevate ${{ env.VERSION }}
+          body_path: packaging/release-notes/${{ env.VERSION }}.md
+          files: artifacts/release/*
+          fail_on_unmatched_files: true
+
+      - name: Remove signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ('${{ steps.cert.outputs.thumbprint }}') {
+            Remove-Item "Cert:\CurrentUser\My\${{ steps.cert.outputs.thumbprint }}" -ErrorAction SilentlyContinue
+          }

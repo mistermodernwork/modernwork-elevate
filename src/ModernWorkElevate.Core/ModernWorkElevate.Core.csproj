@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <RootNamespace>ModernWorkElevate.Core</RootNamespace>
+    <AssemblyName>ModernWorkElevate.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The test project exercises internal helpers (e.g. ActivationStatusParser) directly. -->
+    <InternalsVisibleTo Include="ModernWorkElevate.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Graph" Version="5.56.0" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.66.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.66.0" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.66.0" />
+  </ItemGroup>
+
+  <!--
+    Transitive Kiota packages (via Microsoft.Graph 5.56) lifted to a patched version.
+    Kiota < 1.22.0 keeps sensitive headers (Cookie, Proxy-Authorization) on cross-host redirects —
+    GHSA-7j59-v9qr-6fq9 / CVE-2026-44503, NuGet audit NU1903. All Kiota packages share one version,
+    so they are pinned together. Remove once Microsoft.Graph itself depends on >= 1.22.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Kiota.Abstractions" Version="1.22.2" />
+    <PackageReference Include="Microsoft.Kiota.Authentication.Azure" Version="1.22.2" />
+    <PackageReference Include="Microsoft.Kiota.Http.HttpClientLibrary" Version="1.22.2" />
+    <PackageReference Include="Microsoft.Kiota.Serialization.Form" Version="1.22.2" />
+    <PackageReference Include="Microsoft.Kiota.Serialization.Json" Version="1.22.2" />
+    <PackageReference Include="Microsoft.Kiota.Serialization.Multipart" Version="1.22.2" />
+    <PackageReference Include="Microsoft.Kiota.Serialization.Text" Version="1.22.2" />
+  </ItemGroup>
+
+  <!--
+    Architecture boundary: ModernWorkElevate.Core must stay free of UI dependencies.
+    This guard fails the build if WPF / WinForms are ever enabled here.
+  -->
+  <Target Name="GuardCoreHasNoUi" BeforeTargets="CoreCompile">
+    <Error Condition="'$(UseWPF)' == 'true' Or '$(UseWindowsForms)' == 'true'"
+           Text="ModernWorkElevate.Core must not enable WPF or WinForms — keep UI code in ModernWorkElevate.App." />
+  </Target>
+
+</Project>

@@ -1,0 +1,347 @@
+# Entra App Registration — Setup for ModernWork Elevate
+
+> This guide describes the one-time setup of an Entra App Registration
+> that ModernWork Elevate needs in order to authenticate against Microsoft Graph
+> and Azure Resource Manager.
+> Requires an Entra administrator for the admin consent in every tenant in which
+> ModernWork Elevate will be used.
+>
+> The app is configured **per tenant**: every tenant you sign in to gets one
+> entry — the tenant's id, the client id of the App Registration to use there,
+> and the cloud. One **multi-tenant** registration used in several tenants is
+> simply listed once per tenant with the same client id; a customer who insists
+> on their own **single-tenant** registration is an entry with their client id.
+> The list is also the whitelist: a tenant without an entry cannot be signed in to.
+>
+> **Your own registration.** ModernWork Elevate ships no App Registration of its own:
+> every tenant signs in through a registration your organization owns. Sections
+> §1–§8 describe how to create and consent it. Tenants are best pre-configured
+> for all users through the machine policy ([deployment.md](deployment.md)).
+>
+> **Using Entra China (21Vianet) too?** National clouds are physically isolated
+> instances of Entra, so a Global App Registration does not exist there. Work
+> through this guide once per cloud and see [§7](#7-sovereign-clouds-entra-china--21vianet)
+> for what differs. **Upgrading from 0.6.x?** See [§8](#8-upgrading-from-06x).
+
+## 1. Create the App Registration
+
+> **In a hurry?** `scripts/create-app-registration.ps1` automates §1–§4 of this guide
+> and prints the command lines an unattended rollout needs — see
+> [unattended-deployment.md](unattended-deployment.md). The steps below are the manual
+> equivalent, and remain the reference for what the script does.
+
+1. [Entra portal](https://entra.microsoft.com) → **Identity → Applications →
+   App registrations → New registration**.
+2. **Name**: `ModernWork Elevate`.
+3. **Supported account types**:
+   - **Accounts in any organizational directory (Multitenant)** when the same
+     registration should serve several tenants (the usual case for an MSP or a
+     group: register once in the home tenant, consent per tenant — step 4).
+   - **Accounts in this organizational directory only (Single tenant)** for a
+     registration that lives and is used in exactly one tenant — e.g. a customer
+     who will not consent to a foreign app and registers their own.
+   - Never "... and personal Microsoft accounts".
+4. **Redirect URI**: leave empty for now — it is set as a platform in step 2.
+5. **Register**.
+
+Note from the overview:
+
+- **Application (client) ID** → the client id
+- **Directory (tenant) ID** → the tenant id of the tenant you registered in
+
+## 2. Platform & redirect URI (WAM broker)
+
+1. App Registration → **Authentication → Add a platform → Mobile and desktop
+   applications**.
+2. Add a custom redirect URI:
+
+   ```text
+   ms-appx-web://microsoft.aad.brokerplugin/{client-id}
+   ```
+
+   Replace `{client-id}` with the real Application (client) ID.
+3. **Allow public client flows**: leave it at **No**.
+
+   > **Why:** the WAM broker sign-in identifies itself as a public client through
+   > the redirect URI above and does not need this flag. With the flag off, Entra
+   > itself refuses the device-code flow and username/password (ROPC) requests for
+   > this app — ModernWork Elevate never uses either, and nobody else can abuse the
+   > registration for them. Recommended in addition: a Conditional Access policy
+   > that blocks the device-code flow tenant-wide (*Conditions → Authentication
+   > flows*).
+
+## 3. API permissions (delegated)
+
+**API permissions → Add a permission → Microsoft Graph → Delegated permissions** —
+add the following scopes:
+
+| Scope | Purpose |
+|---|---|
+| `User.Read` | Profile of the signed-in user |
+| `RoleEligibilitySchedule.Read.Directory` | Read eligible directory roles |
+| `RoleAssignmentSchedule.ReadWrite.Directory` | Activate/deactivate directory roles |
+| `RoleManagementPolicy.Read.Directory` | Read PIM policies for directory roles |
+| `RoleManagementPolicy.Read.AzureADGroup` | Read PIM policies for groups (member and owner) |
+| `PrivilegedAccess.ReadWrite.AzureADGroup` | Activate/deactivate PIM for Groups |
+| `Group.Read.All` | Resolve group names |
+
+PIM for Azure Resources goes through Azure Resource Manager rather than Graph and
+needs one more delegated permission:
+
+**API permissions → Add a permission → Azure Service Management → Delegated
+permissions** — add `user_impersonation`.
+
+| Permission | Purpose |
+|---|---|
+| `user_impersonation` (Azure Service Management) | List, activate and deactivate Azure resource roles (PIM for Azure Resources) as the signed-in user |
+
+The app derives the matching scope (`https://management.azure.com/user_impersonation`,
+or the China host's) from the entry's cloud — it is not configured anywhere. A
+tenant that never grants this permission still works for directory roles and
+groups; its tenant group shows "Azure resource roles unavailable" instead of the
+Azure rows.
+
+## 4. Admin consent — per tenant
+
+**API permissions → Grant admin consent for \<home tenant\>**.
+
+For a multi-tenant registration, **every additional tenant** in which Entra PIM
+Manager will be used needs its own consent by an admin of that tenant:
+
+```text
+https://login.microsoftonline.com/{external-tenant-id}/adminconsent
+    ?client_id={pim-manager-client-id}
+    &redirect_uri=ms-appx-web://microsoft.aad.brokerplugin/{pim-manager-client-id}
+```
+
+Replace `{external-tenant-id}` and `{pim-manager-client-id}`. The admin in that
+tenant follows the link, signs in, and confirms the permissions once. A
+single-tenant registration needs consent in its own tenant only — it cannot be
+used anywhere else.
+
+After **Accept** the browser keeps loading: it cannot open the `ms-appx-web://`
+redirect URI. The consent is recorded all the same (field test 2026-10-17);
+close the tab and check Enterprise applications → the app → **Permissions** →
+**Admin consent**.
+
+The host above is the **Global** authority. Consent for a tenant in another
+cloud runs against that cloud's own authority and its own client id — for
+Entra China:
+
+```text
+https://login.partner.microsoftonline.cn/{external-tenant-id}/adminconsent
+    ?client_id={china-client-id}
+    &redirect_uri=ms-appx-web://microsoft.aad.brokerplugin/{china-client-id}
+```
+
+Without admin consent in the respective tenant, the first Graph call fails when
+that account is added. The consent URL covers every permission listed on the
+registration — the Azure Service Management one included.
+
+## 5. Enter the registration in the app
+
+For a managed rollout, put the entries into the machine policy instead
+(`HKLM\SOFTWARE\Policies\ModernWorkElevate\Tenants`, see [deployment.md](deployment.md)): every
+user gets them, and with `LockTenants` nobody can change them. For a single user, no file editing
+is needed either: start the app, open **Settings →
+TENANTS**, and add an entry: the **tenant id**, the **client id** from step 1, the **cloud**, and an optional **label** (e.g. the
+customer's name — it names the entry in the sign-in picker and replaces the
+directory's display name wherever the tenant is shown) → **Add**. The app saves
+it to your per-user config at
+`%APPDATA%\ModernWorkElevate\appsettings.local.json` and applies it
+on the next restart (**Restart now** in the banner). Repeat for every tenant you
+sign in to — with the same client id for every tenant a multi-tenant
+registration is consented in.
+
+The gear on a tenant's card opens its entry: client id, label and ticket system → **Save**, or
+**Cancel**. A changed client id on a tenant that has accounts asks for a second
+click and removes those accounts first; add them again after the restart.
+Tenant id and cloud are the card itself and cannot be
+edited — a different tenant id or cloud is a different tenant: add it as a new
+one, and remove the old card if it is no longer needed. **Remove tenant**
+in the same place removes the tenant completely — its accounts and their
+sign-ins, its App Registration and its ticket system — and asks for a second
+click. An entry removed outside the app (a hand edit of the file) leaves its
+accounts on their card, which says they can no longer sign in; remove the tenant
+or add the entry again.
+
+The green **Verified** badge only appears once an account has actually signed in
+with that entry; it is per registration, because a sign-in with one client id
+proves nothing about another.
+
+### Configuration shape
+
+The UI writes this; the entries can also be hand-edited:
+
+```json
+{
+  "ModernWorkElevate": {
+    "TenantAppRegistrations": [
+      {
+        "TenantId": "11111111-1111-1111-1111-111111111111",
+        "ClientId": "22222222-2222-2222-2222-222222222222",
+        "Cloud": "Global",
+        "Label": "Contoso"
+      }
+    ]
+  }
+}
+```
+
+The form has one more field, **Ticket system**, which is deliberately *not* part of
+this file: it is prefilled into the activation form for that tenant whenever a role
+requires a ticket, and it is stored with the other user settings, so it applies at
+once instead of after the restart the registration fields need. Leave it empty and
+the field simply starts blank.
+
+`Cloud` defaults to `Global`; `Label` is optional. Keep the list in **one** file:
+.NET's configuration overlays arrays index by index, so the same key in two
+files merges entry-wise. The shipped `appsettings.json` deliberately carries
+no entries — only the scopes. Policy entries are merged in after all files and
+win over a per-user entry for the same tenant.
+
+### Running from source
+
+When launching from a source build instead of an installer, you can skip the UI
+and provide the entries directly: copy
+`src/ModernWorkElevate.App.Avalonia/appsettings.local.json.sample` to
+`src/ModernWorkElevate.App.Avalonia/appsettings.local.json` and fill in
+`TenantAppRegistrations`. Both this file and the per-user one are in `.gitignore` —
+**never commit either**.
+
+## 6. Verification
+
+1. **Start the app and open Settings → ACCOUNTS → "Add account…".** A slide-in
+   opens with a **Sign in with** picker (hidden while only one entry exists) and
+   a primary **Sign in** button.
+2. **Pick the entry and click Sign in** → the WAM picker appears; choose an
+   account that is a member or guest of that tenant. The account then appears in
+   `%APPDATA%\ModernWorkElevate\accounts.json` and in the UI.
+3. **Add the same identity in another tenant** → open "Add account…" again, pick
+   that tenant's entry, and sign in. This requires admin consent in the second
+   tenant (step 4 of this guide).
+4. **Federated IdP signs you in as the wrong account?** Sign out of the everyday
+   account in the IdP's browser session or use *Use another account* in the WAM
+   picker. ModernWork Elevate has no device-code fallback by design.
+
+For every enrolled account a dedicated `GraphServiceClient` is instantiated
+(see [IGraphClientFactory.CreateFor(account)](../src/ModernWorkElevate.Core/Graph/IGraphClientFactory.cs)),
+plus a dedicated Azure Resource Manager client
+([IArmClientFactory.CreateFor(account)](../src/ModernWorkElevate.Core/Arm/IArmClientFactory.cs)),
+so that token acquisition, retry, and claims challenges run cleanly per tenant.
+Each App Registration gets its own MSAL public client. Tokens are never written
+to disk: the WAM broker keeps the refresh tokens, MSAL holds access tokens in
+memory.
+
+## 7. Sovereign clouds (Entra China / 21Vianet)
+
+Microsoft's national clouds are *physically isolated instances* of Azure and
+Entra — separate directories, separate authorities, separate Graph endpoints.
+Two consequences drive the whole setup:
+
+- An App Registration exists in exactly **one** cloud. "Multitenant" means every
+  tenant *in that cloud*, not across clouds. A Global client id sent to the
+  21Vianet authority fails with `AADSTS700016` ("application not found in the
+  directory").
+- Access tokens are not interchangeable between clouds.
+
+So you need **a second App Registration, created inside a China tenant**.
+
+### What differs
+
+| | Global | Entra China (21Vianet) |
+|---|---|---|
+| Portal to register in | `portal.azure.com` | `portal.azure.cn` |
+| Authority | `login.microsoftonline.com` | `login.partner.microsoftonline.cn` |
+| Microsoft Graph | `graph.microsoft.com` | `microsoftgraph.chinacloudapi.cn` |
+| Azure Resource Manager | `management.azure.com` | `management.chinacloudapi.cn` |
+| Entry's `Cloud` | `Global` | `China` |
+
+### Procedure
+
+1. Sign in to [portal.azure.cn](https://portal.azure.cn) with an admin of your
+   China tenant and repeat **steps 1–4** of this guide there. Nothing changes in
+   substance: same name, same redirect-URI pattern (with the **China** client
+   id), "Allow public client flows" on, the same delegated permissions (Graph
+   and Azure Service Management), admin consent per China tenant via the
+   `login.partner…` URL in step 4.
+2. In the app: **Settings → TENANTS** → add an entry with the China
+   tenant's id, the China client id and cloud *Entra China (21Vianet)* →
+   **Add** → **Restart now**.
+3. After the restart, **Settings → ACCOUNTS → "Add account…"** lists the China
+   entry under **Sign in with**. Pick it and sign in.
+
+Global and China accounts coexist: each enrollment records its cloud, and the app
+routes its token acquisition, token cache file and Graph base URL accordingly.
+
+### Caveats
+
+- **Feature availability.** Microsoft states that services and features present
+  in the global service may be missing from a national cloud. Verify that your
+  eligibilities actually list before relying on the China path in production.
+- **WAM broker.** The broker is used against the 21Vianet authority the same way
+  as against Global.
+
+## 8. Upgrading from 0.6.x
+
+Versions up to 0.6.x held **one client id per cloud** (`AppRegistrations:Global`,
+`AppRegistrations:China`; before 0.4.2 a bare `ClientId`) and let any tenant sign
+in through it, optionally limited by an `AllowedTenants` whitelist. 0.7.0 folds
+that into per-tenant entries **automatically at first start**:
+
+- every tenant an account is enrolled in becomes an entry with that cloud's
+  client id, so **no account has to sign in again**;
+- every tenant in `AllowedTenants` becomes an entry too (with the Global client
+  id, or the only configured cloud's);
+- the token-cache files are renamed from the per-cloud names (`msal.cache`,
+  `msal-china.cache`, …) to the per-client-id names;
+- the legacy keys are removed from `appsettings.local.json`.
+
+**Action required in one case:** a client id that was configured but had
+neither an enrolled account nor a whitelisted tenant has no tenant to be pinned
+to. It is dropped (the log says so) and Settings shows no entry — add it again
+together with its tenant id. Likewise, signing in to a tenant that has never
+been enrolled now needs an entry first; the free-text "tenant id or domain"
+field of the add-account panel is gone.
+
+## Troubleshooting
+
+- **`AADSTS700016` — "application not found in the directory"**: the client id
+  is unknown in the tenant it was sent to. Check the entry's tenant id, client
+  id and cloud, and that admin consent was granted in that tenant (step 4).
+- **`AADSTS65001` — consent missing** (also `AADSTS65004`, `AADSTS90094`): no
+  admin has consented to the app in that tenant yet. Grant admin consent (step 4).
+- **`AADSTS50105` — "Your account is not assigned to ModernWork Elevate in this
+  tenant"**: the app has **Assignment required** on, and the account is not
+  assigned, directly or through a group. An admin assigns it under Enterprise
+  applications → the app → **Users and groups**.
+- **`AADSTS7000112` or `AADSTS70001` — the app is switched off**: in the tenant,
+  check **Enabled for users to sign-in?** on the app under Enterprise
+  applications.
+- **"The sign-in ended up in a different tenant than the selected entry"**: the
+  token Entra issued names another tenant than the entry. Check the entry's
+  tenant id.
+- **"Sign-in for this account is no longer valid (its App Registration may have
+  changed)"** on a tenant group: the entry the account was enrolled through was
+  removed or its client id changed. Remove the account in Settings and add it
+  again through the current entry.
+- **"Azure resource roles unavailable: This tenant has not consented…"** on a
+  tenant group: the registration lacks the Azure Service Management →
+  `user_impersonation` permission, or the tenant has not consented to it yet
+  (steps 3 and 4). Directory roles and groups keep working; the Azure rows appear
+  on their own once consent is granted, within the hour or after a restart.
+- **"Azure resource roles unavailable: The background sign-in for Azure was
+  refused…"** on a tenant group: the Azure token is requested silently, and
+  Windows does not say why it was refused. Usually the tenant's consent covers
+  the Microsoft Graph permissions but not Azure, for example one given in the
+  sign-in window, which asks for Graph only: grant
+  admin consent ([the consent link](#the-consent-link), or step 4). Otherwise a Conditional
+  Access policy on Azure management (Windows Azure Service Management API), such
+  as "require MFA", wants more than the Windows sign-in session carries.
+- **An Azure role assigned to a group does not appear, while other Azure roles
+  do**: Azure resolves the caller's group memberships from its own cache, so a
+  membership that changed minutes ago is not visible to the eligibility query
+  yet — most often after an eligible PIM-for-Groups member was turned into a
+  real member. The permission is not the problem: refresh again later. To
+  confirm the eligibility exists at all, list it by the group instead of by
+  yourself (`$filter=principalId eq '<group object id>'` at the scope).

@@ -1,0 +1,519 @@
+namespace ModernWorkElevate.AppAvalonia;
+
+using System.IO;
+using System.Threading;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Markup.Xaml;
+using Avalonia.Styling;
+using Avalonia.Threading;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using ModernWorkElevate.AppAvalonia.Services;
+using ModernWorkElevate.AppAvalonia.Tray;
+using ModernWorkElevate.AppAvalonia.ViewModels;
+using ModernWorkElevate.AppAvalonia.Views;
+using ModernWorkElevate.Core.Arm;
+using ModernWorkElevate.Core.Auth;
+using ModernWorkElevate.Core.Caching;
+using ModernWorkElevate.Core.Configuration;
+using ModernWorkElevate.Core.Diagnostics;
+using ModernWorkElevate.Core.Graph;
+using ModernWorkElevate.Core.Services;
+using Serilog;
+using Serilog.Core;
+using Serilog.Events;
+using Serilog.Formatting.Compact;
+
+/// <summary>
+/// Avalonia application composition root. Builds the generic host, wires the
+/// tray icon to a single re-usable popup window, and prompts for first-run
+/// configuration when none is present. There is no main window: the tray icon
+/// is the only persistent UI anchor.
+/// </summary>
+public partial class App : Application
+{
+    // Serilog's minimum level, adjustable at runtime: seeded to Information
+    // (covers the window before user settings are loaded), then driven by the
+    // persisted LogLevel preference — no restart needed when it changes.
+    private static readonly LoggingLevelSwitch LogLevelSwitch = new(LogEventLevel.Information);
+
+    private IHost? _host;
+    private TrayPopupController? _popupController;
+    private ExpiryAlertController? _expiryAlertController;
+    private UpdateController? _updateController;
+    private FirstRunSetupController? _firstRunSetupController;
+    private WhatsNewController? _whatsNewController;
+    private long _lastErrorToastTicks = -60_000;
+    private bool _shuttingDown;
+
+    /// <summary>Service provider for views/code-behind that cannot get DI injection directly.</summary>
+    public static IServiceProvider? Services { get; private set; }
+
+    /// <inheritdoc />
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+    }
+
+    /// <inheritdoc />
+    public override void OnFrameworkInitializationCompleted()
+    {
+        if (ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            base.OnFrameworkInitializationCompleted();
+            return;
+        }
+
+        // The tray app has no main window — Avalonia must keep the message loop
+        // running until we explicitly shut down via the tray menu.
+        desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        try
+        {
+            _host = BuildHost();
+            _host.Start();
+        }
+        catch (OptionsValidationException ex)
+        {
+            // Only a malformed configuration file lands here (unknown cloud name,
+            // non-GUID tenant id, ...); a missing client id boots into the
+            // first-run CTA instead. Name the failing keys — the file is
+            // hand-editable and this is the only place the user learns why the
+            // app won't start.
+            Log.Fatal("ModernWork Elevate: configuration invalid: {Failures}", string.Join("; ", ex.Failures));
+            desktop.Shutdown(1);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "Host startup failed");
+            desktop.Shutdown(1);
+            return;
+        }
+
+        Services = _host.Services;
+
+        // The net behind every command's own catch: an
+        // exception nobody caught is logged and reported instead of ending the tray app,
+        // whose icon and expiry alarm the user relies on. One toast a minute at most, so a
+        // timer that keeps failing does not flood the notification center.
+        var toasts = Services.GetRequiredService<IToastService>();
+        Dispatcher.UIThread.UnhandledException += (_, e) =>
+        {
+            Log.Error(e.Exception, "Unhandled exception on the UI thread");
+
+            // A failing shutdown must still end the process, not leave it running on a disposed host.
+            if (_shuttingDown)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            if (Environment.TickCount64 - _lastErrorToastTicks >= 60_000)
+            {
+                _lastErrorToastTicks = Environment.TickCount64;
+                toasts.ShowError("Unexpected error", "An unexpected error occurred. See the log file for details.");
+            }
+        };
+
+        // Off the UI thread nothing keeps the process alive; at least the cause reaches the log.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            Log.Fatal(e.ExceptionObject as Exception, "Unhandled exception; the app ends");
+            Log.CloseAndFlush();
+        };
+
+        // A discarded task (`_ = SaveAsync()`) that fails past its own catch reaches no handler
+        // above; this logs it, late, when the task is collected.
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Log.Error(e.Exception, "Unobserved task exception");
+            e.SetObserved();
+        };
+
+        _popupController = Services.GetRequiredService<TrayPopupController>();
+
+        // Surface the popup when a second launch signals us (single-instance).
+        StartSingleInstanceListener();
+
+        // Resolve the expiry-alert controller so it subscribes to the shell's
+        // IsExpiryAlertVisible before the countdown timer starts ticking. It owns
+        // its own always-on-top window, independent of the tray popup.
+        _expiryAlertController = Services.GetRequiredService<ExpiryAlertController>();
+
+        // Load persisted user settings before any view model reads them.
+        // Phases 2+ (theme apply, default duration, expiry-warn gating)
+        // depend on the cached Current value being populated here.
+        var userSettings = Services.GetRequiredService<IUserSettingsService>();
+        userSettings.LoadAsync().GetAwaiter().GetResult();
+
+        // Same reason: the shell reads the starred sets while it builds its first rows.
+        Services.GetRequiredService<IScopeFavoritesStore>().LoadAsync().GetAwaiter().GetResult();
+        RequestedThemeVariant = ThemeMapper.ToVariant(userSettings.Current.Theme);
+
+        // Accent tokens from the user's Windows accent colour, kept in sync with
+        // theme and accent changes (Services/AccentPalette.cs).
+        AccentPalette.Attach(this);
+        ApplyLogLevel(userSettings.Current.LogLevel);
+        userSettings.Changed += settings => ApplyLogLevel(settings.LogLevel);
+
+        SyncAutostartMenuCheck(this, Services);
+
+        // Start the auto-updater after settings are loaded so its first check
+        // reads the real AutomaticUpdatesEnabled value. No-ops when not running
+        // from a the installer install.
+        _updateController = Services.GetRequiredService<UpdateController>();
+        _updateController.Start();
+
+        // Show the one-time first-run setup dialog if the installer's OnFirstRun hook
+        // left a marker this launch (autostart / Start menu opt-out). No-ops otherwise.
+        _firstRunSetupController = Services.GetRequiredService<FirstRunSetupController>();
+        _firstRunSetupController.Start();
+
+        // Release notes, once per version change. Deliberately not tied to the
+        // first-run marker above: the installer raises OnFirstRun for a Setup.exe run over
+        // an existing install too, so keying off it would swallow the notes on the
+        // most common manual update. The cost is one extra dismissible window on a
+        // genuinely fresh install.
+        _whatsNewController = Services.GetRequiredService<WhatsNewController>();
+        _whatsNewController.Start();
+
+        desktop.ShutdownRequested += (_, _) =>
+        {
+            _shuttingDown = true;
+            _popupController?.PrepareForShutdown();
+            _expiryAlertController?.PrepareForShutdown();
+            _updateController?.PrepareForShutdown();
+            _host?.StopAsync().GetAwaiter().GetResult();
+            _host?.Dispose();
+            Log.CloseAndFlush();
+        };
+
+        base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>Tray icon click handler — wired from App.axaml.</summary>
+    public void OnTrayIconClicked(object? sender, EventArgs e)
+        => _popupController?.Toggle();
+
+    /// <summary>Tray menu "Open" — wired from App.axaml.</summary>
+    public void OnOpenClicked(object? sender, EventArgs e)
+        => _popupController?.Show();
+
+    /// <summary>Tray menu "Refresh" — wired from App.axaml.</summary>
+    public async void OnRefreshClicked(object? sender, EventArgs e)
+    {
+        if (_popupController is not null)
+        {
+            await _popupController.RefreshAsync();
+        }
+    }
+
+    /// <summary>Tray menu "Settings…" — opens the popup and slides the settings panel in.</summary>
+    public void OnSettingsClicked(object? sender, EventArgs e)
+    {
+        _popupController?.Show();
+
+        if (Services?.GetService(typeof(ShellViewModel)) is ShellViewModel shell)
+        {
+            shell.OpenSettingsPanelCommand.Execute(null);
+        }
+    }
+
+    /// <summary>Tray menu "Start with Windows" — wired from App.axaml.</summary>
+    public void OnAutostartClicked(object? sender, EventArgs e)
+    {
+        if (Services?.GetService(typeof(IAutostartService)) is not IAutostartService autostart)
+        {
+            return;
+        }
+
+        try
+        {
+            if (autostart.IsEnabled)
+            {
+                autostart.Disable();
+            }
+            else
+            {
+                autostart.Enable();
+            }
+
+            if (sender is NativeMenuItem item)
+            {
+                item.IsChecked = autostart.IsEnabled;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Autostart toggle failed");
+        }
+    }
+
+    /// <summary>Tray menu "Exit" — wired from App.axaml.</summary>
+    public void OnExitClicked(object? sender, EventArgs e)
+    {
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+        }
+    }
+
+    /// <summary>
+    /// Adds the files the options come from, in override order: the shipped
+    /// <c>appsettings.json</c>, a local override next to it, and the per-user configuration.
+    /// One list for the app and the uninstall hook (<see cref="Program"/>), so the hook resolves
+    /// the same App Registration a token was issued through.
+    /// </summary>
+    internal static IConfigurationBuilder AddConfigurationFiles(IConfigurationBuilder configuration)
+        => configuration
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+            .AddJsonFile("appsettings.local.json", optional: true, reloadOnChange: false)
+            .AddJsonFile(AppPaths.LocalConfigFile, optional: true, reloadOnChange: false);
+
+    /// <summary>
+    /// Maps the persisted preference onto the Serilog level switch. Takes
+    /// effect immediately for all sinks — called at startup and on every
+    /// settings save.
+    /// </summary>
+    private static void ApplyLogLevel(LogLevelPreference level) =>
+        LogLevelSwitch.MinimumLevel = level switch
+        {
+            LogLevelPreference.Debug => LogEventLevel.Debug,
+            LogLevelPreference.Warning => LogEventLevel.Warning,
+            _ => LogEventLevel.Information,
+        };
+
+    private static void SyncAutostartMenuCheck(Application app, IServiceProvider services)
+    {
+        if (services.GetService(typeof(IAutostartService)) is not IAutostartService autostart)
+        {
+            return;
+        }
+
+        var menu = TrayIcon.GetIcons(app)?.FirstOrDefault()?.Menu;
+        if (menu is null)
+        {
+            return;
+        }
+
+        foreach (var entry in menu.Items)
+        {
+            if (entry is NativeMenuItem item
+                && string.Equals(item.Header, "Start with Windows", StringComparison.Ordinal))
+            {
+                item.IsChecked = autostart.IsEnabled;
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Folds a pre-0.7.0 per-cloud configuration into per-tenant entries before the
+    /// host binds it — see <see cref="LegacyRegistrationMigration"/>. Never blocks
+    /// startup: a failure here leaves the legacy file in place and is logged.
+    /// </summary>
+    private static void MigrateLegacyRegistrations()
+    {
+        try
+        {
+            var result = LegacyRegistrationMigration.Run(AppPaths.LocalConfigFile, AppPaths.AccountsFile, AppPaths.DataDirectory);
+            foreach (var entry in result.Migrated)
+            {
+                Log.Information(
+                    "Migrated legacy client id {ClientId} to a tenant entry for {TenantId} ({Cloud})",
+                    entry.ClientId,
+                    entry.TenantId,
+                    entry.Cloud);
+            }
+
+            foreach (var (cloud, clientId) in result.Dropped)
+            {
+                Log.Warning(
+                    "Legacy client id {ClientId} for {Cloud} had no enrolled or whitelisted tenant and was removed — add it under Settings → Tenants together with its tenant id",
+                    clientId,
+                    cloud);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Migrating the legacy App Registration configuration failed; the file was left unchanged");
+        }
+    }
+
+    /// <summary>
+    /// Reads the HKLM policy once per start and logs what it decided — flags and tenant ids
+    /// only, never anything user-specific.
+    /// </summary>
+    private static MachinePolicy ReadMachinePolicy()
+    {
+        var policy = MachinePolicyReader.Read(out var skipped);
+        foreach (var name in skipped)
+        {
+            Log.Warning("Machine policy tenant entry {Name} is invalid or a duplicate and was ignored", name);
+        }
+
+        Log.Information(
+            "Machine policy: {TenantCount} tenant(s), locked {LockTenants}",
+            policy.Tenants.Count,
+            policy.LockTenants);
+        return policy;
+    }
+
+    private static IHost BuildHost()
+    {
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            ContentRootPath = AppContext.BaseDirectory,
+        });
+
+        Directory.CreateDirectory(AppPaths.LogDirectory);
+
+        // Day-files can reach ~250 MB (MSAL debug volume), so keep only a
+        // week — Serilog deletes older files when it rolls to a new one.
+        const int retainedLogFiles = 7;
+
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.ControlledBy(LogLevelSwitch)
+            .Enrich.FromLogContext()
+            .WriteTo.Console()
+            .WriteTo.File(
+                new CompactJsonFormatter(),
+                Path.Combine(AppPaths.LogDirectory, "modernwork-elevate-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: retainedLogFiles)
+            .CreateLogger();
+
+        // After the logger (so the outcome is recorded) and before the JSON
+        // files are added — ConfigurationManager reads them right there.
+        MigrateLegacyRegistrations();
+
+        // Main already created the directories; repeated here only so a failed ACL is logged.
+        foreach (var directory in AppPaths.EnsureDirectories())
+        {
+            Log.Warning("Could not restrict {Directory} to the current user; it keeps the profile's default permissions", directory);
+        }
+
+        // First line of every start: which build is running. Field logs from two builds
+        // side by side were otherwise impossible to tell apart.
+        Log.Information(
+            "ModernWork Elevate {Version} starting on {Framework}, Windows build {WindowsBuild}",
+            typeof(App).Assembly.GetName().Version?.ToString(3) ?? "unknown",
+            System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+            Environment.OSVersion.Version.Build);
+
+        var machinePolicy = ReadMachinePolicy();
+
+        AddConfigurationFiles(builder.Configuration);
+
+        builder.Logging.ClearProviders();
+        builder.Services.AddSerilog();
+
+        builder.Services.AddOptions<ModernWorkElevateOptions>()
+            .Bind(builder.Configuration.GetSection(ModernWorkElevateOptions.SectionName))
+            .ValidateOnStart();
+
+        // No shared-hosted registration, whatever any file says, and the
+        // machine policy (HKLM) applied last. PostConfigure runs after every bind and
+        // before validation, so no per-user layer can override either.
+        builder.Services.PostConfigure<ModernWorkElevateOptions>(o =>
+        {
+            o.UseSharedHostedClientId(null);
+            o.ApplyMachinePolicy(machinePolicy);
+        });
+        builder.Services.AddSingleton<IValidateOptions<ModernWorkElevateOptions>, ModernWorkElevateOptionsValidator>();
+
+        // Auth + Graph layer (Core).
+        builder.Services.AddSingleton<IWindowTracker, AvaloniaWindowTracker>();
+        builder.Services.AddSingleton<TokenCacheFactory>();
+        builder.Services.AddSingleton<IAccountStore>(sp => new AccountStore(
+            AppPaths.AccountsFile,
+            sp.GetRequiredService<ILogger<AccountStore>>()));
+        builder.Services.AddSingleton<IJustificationFavoritesStore>(sp => new JustificationFavoritesStore(
+            AppPaths.FavoritesFile,
+            sp.GetRequiredService<ILogger<JustificationFavoritesStore>>()));
+        builder.Services.AddSingleton<IScopeFavoritesStore>(sp => new ScopeFavoritesStore(
+            AppPaths.ScopeFavoritesFile,
+            sp.GetRequiredService<ILogger<ScopeFavoritesStore>>()));
+        builder.Services.AddSingleton<IUserSettingsService>(sp => new UserSettingsService(
+            AppPaths.SettingsFile,
+            sp.GetRequiredService<ILogger<UserSettingsService>>()));
+        builder.Services.AddSingleton<IAuthService, MsalAuthService>();
+        builder.Services.AddSingleton<IGraphClientFactory, GraphClientFactory>();
+        builder.Services.AddSingleton<IArmClientFactory, ArmClientFactory>();
+        builder.Services.AddSingleton<PolicyCache>();
+        builder.Services.AddSingleton<IAccountScopedServices, AccountScopedServices>();
+        builder.Services.AddSingleton<IEligibilityAggregator, EligibilityAggregator>();
+        builder.Services.AddSingleton<ITenantInfoService, TenantInfoService>();
+        builder.Services.AddSingleton<INetworkDiagnosticsService, NetworkDiagnosticsService>();
+
+        // UI + tray (App.Avalonia).
+        builder.Services.AddSingleton<IToastService, ToastService>();
+        builder.Services.AddSingleton<IAutostartService, AutostartService>();
+        builder.Services.AddSingleton<ActivationPanelViewModel>();
+        builder.Services.AddSingleton<AddTenantPanelViewModel>();
+        builder.Services.AddSingleton<SettingsPanelViewModel>();
+        builder.Services.AddSingleton<ShellViewModel>();
+        builder.Services.AddSingleton<TrayPopupWindow>();
+        builder.Services.AddSingleton<TrayPopupController>();
+        builder.Services.AddSingleton<ExpiryAlertWindow>();
+        builder.Services.AddSingleton<ExpiryAlertController>();
+        builder.Services.AddSingleton<IUpdateService, UpdateService>();
+        builder.Services.AddSingleton<UpdatePromptViewModel>();
+        builder.Services.AddSingleton<UpdatePromptWindow>();
+        builder.Services.AddSingleton<UpdateController>();
+        builder.Services.AddSingleton<IShortcutService, ShortcutService>();
+        builder.Services.AddSingleton<FirstRunSetupViewModel>();
+        builder.Services.AddSingleton<FirstRunSetupWindow>();
+        builder.Services.AddSingleton<FirstRunSetupController>();
+        builder.Services.AddSingleton<WhatsNewViewModel>();
+        builder.Services.AddSingleton<WhatsNewWindow>();
+        builder.Services.AddSingleton<WhatsNewController>();
+
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// Watches the cross-process "show window" event (set by a second launch) on a
+    /// background thread and surfaces the tray popup on the UI thread each time it
+    /// fires. No-ops when the signal couldn't be created. The thread is a background
+    /// thread, so it never holds up shutdown.
+    /// </summary>
+    private void StartSingleInstanceListener()
+    {
+        var signal = Program.ShowWindowSignal;
+        if (signal is null)
+        {
+            return;
+        }
+
+        var listener = new Thread(() =>
+        {
+            while (true)
+            {
+                try
+                {
+                    signal.WaitOne();
+                }
+                catch
+                {
+                    // Handle disposed / abandoned on shutdown — stop listening.
+                    return;
+                }
+
+                Dispatcher.UIThread.Post(() => _popupController?.Show());
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "single-instance-listener",
+        };
+
+        listener.Start();
+    }
+}

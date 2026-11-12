@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ModernWork Elevate – administrative Vorlage.
+  Alle Werte unter HKLM\SOFTWARE\Policies\ModernWorkElevate. Gerätecode-Anmeldung und ein
+  Token-Cache auf dem Datenträger sind in diesem Build fest deaktiviert und nicht konfigurierbar. Gilt für alle Benutzer des Geräts;
+  die App liest nur HKLM, ein Standardbenutzer kann die Vorgaben nicht ändern.
+  Gruppenrichtlinie: ADMX nach PolicyDefinitions, ADML nach PolicyDefinitions\<Sprache>.
+  Intune: Geräte > Konfiguration > Importierte administrative Vorlagen (ADMX-Import), dann
+  Profil "Vorlagen > Importierte administrative Vorlagen".
+-->
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   revision="1.0"
+                   schemaVersion="1.0"
+                   xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <policyNamespaces>
+    <target prefix="modernworkelevate" namespace="ModernWorkElevate.Policies" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <supportedOn>
+    <definitions>
+      <definition name="SUPPORTED_ModernWorkElevate_1_2" displayName="$(string.SUPPORTED_ModernWorkElevate_1_2)" />
+    </definitions>
+  </supportedOn>
+  <categories>
+    <category name="Cat_ModernWorkElevate" displayName="$(string.Cat_ModernWorkElevate)" />
+  </categories>
+  <policies>
+
+    <!-- Tenants: Wertname = Tenant-ID, Wert = Client-ID[;Bezeichnung[;Cloud]] -->
+    <policy name="Tenants"
+            class="Machine"
+            displayName="$(string.Tenants)"
+            explainText="$(string.Tenants_Help)"
+            presentation="$(presentation.Tenants)"
+            key="SOFTWARE\Policies\ModernWorkElevate\Tenants">
+      <parentCategory ref="Cat_ModernWorkElevate" />
+      <supportedOn ref="SUPPORTED_ModernWorkElevate_1_2" />
+      <elements>
+        <list id="TenantsList" key="SOFTWARE\Policies\ModernWorkElevate\Tenants" explicitValue="true" />
+      </elements>
+    </policy>
+
+    <policy name="LockTenants"
+            class="Machine"
+            displayName="$(string.LockTenants)"
+            explainText="$(string.LockTenants_Help)"
+            key="SOFTWARE\Policies\ModernWorkElevate"
+            valueName="LockTenants">
+      <parentCategory ref="Cat_ModernWorkElevate" />
+      <supportedOn ref="SUPPORTED_ModernWorkElevate_1_2" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+
+
+  </policies>
+</policyDefinitions>

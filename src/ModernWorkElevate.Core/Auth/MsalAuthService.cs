@@ -1,0 +1,669 @@
+namespace ModernWorkElevate.Core.Auth;
+
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Identity.Client;
+using Microsoft.Identity.Client.Broker;
+using Microsoft.Identity.Client.Extensions.Msal;
+using ModernWorkElevate.Core.Configuration;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
+using MsalLogLevel = Microsoft.Identity.Client.LogLevel;
+
+/// <summary>
+/// MSAL-based implementation of <see cref="IAuthService"/> using the Windows WAM
+/// broker. One <see cref="IPublicClientApplication"/> per App Registration is created
+/// lazily — the registration for an enrollment is derived from its (cloud, tenant) via
+/// <see cref="ModernWorkElevateOptions.ClientIdFor"/> on every call. All token
+/// operations are serialized through a semaphore. Enrolled accounts are persisted via
+/// <see cref="IAccountStore"/> so the UI can render the account list without
+/// unlocking the MSAL cache.
+/// </summary>
+/// <remarks>
+/// Excluded from coverage: every path drives the live Windows WAM broker and the
+/// DPAPI token cache, neither of which can be exercised by a unit test. Verified
+/// by the manual WAM smoke test before each release.
+/// </remarks>
+[ExcludeFromCodeCoverage]
+public sealed class MsalAuthService : IAuthService, IDisposable
+{
+    // How long a dismissed sign-in window keeps the next one away for the same
+    // enrollment. One click on Activate or Refresh makes several token requests;
+    // after the user closed the first window, the others must not each open another.
+    private static readonly TimeSpan DismissedPromptQuietPeriod = TimeSpan.FromSeconds(15);
+
+    private readonly ModernWorkElevateOptions _options;
+    private readonly IWindowTracker _windowTracker;
+    private readonly TokenCacheFactory _cacheFactory;
+    private readonly IAccountStore _accountStore;
+    private readonly ILogger<MsalAuthService> _logger;
+    private readonly SemaphoreSlim _authLock = new(1, 1);
+
+    // Enrollment key (oid|tenant|client id) → when its last sign-in window was dismissed.
+    // Read and written under _authLock only.
+    private readonly Dictionary<string, DateTimeOffset> _dismissedPrompts = new(StringComparer.OrdinalIgnoreCase);
+
+    // MSAL repeats the same environment warnings on every acquisition; this lets each
+    // distinct one through once per process. See MsalLogThrottle for the numbers.
+    private readonly MsalLogThrottle _msalLogThrottle = new();
+
+    // One PCA per App Registration, keyed by client id. A PCA is bound to one
+    // client id, and a client id exists in exactly one cloud, so the id is a
+    // complete key. Each PCA gets its own cache file via TokenCacheFactory so
+    // accounts and tokens of different registrations (and clouds) don't collide.
+    private readonly Dictionary<string, IPublicClientApplication> _pcas = new(StringComparer.OrdinalIgnoreCase);
+
+    // Separate broker-LESS PCAs for the device-code escape hatch. Device-code
+    // flow is incompatible with WAM, so these omit .WithBroker and keep their
+    // refresh tokens in their own cache files (the broker PCAs above store no RTs
+    // — WAM owns those). Routing between the two sets is by SignedInAccount.AuthMethod.
+    private readonly Dictionary<string, IPublicClientApplication> _deviceCodePcas = new(StringComparer.OrdinalIgnoreCase);
+
+    // Broker PCAs used ONLY to ask WAM which accounts this app has used
+    // (GetAccountsAsync), keyed by client id. Without a token cache on disk the sign-in PCA
+    // forgets its accounts when the process ends; this one has ListOperatingSystemAccounts
+    // on so the broker lists them again. It never runs an interactive request, so the
+    // wrong-account auto-pick that setting causes in the WAM picker cannot happen.
+    private readonly Dictionary<string, IPublicClientApplication> _discoveryPcas = new(StringComparer.OrdinalIgnoreCase);
+
+    public MsalAuthService(
+        IOptions<ModernWorkElevateOptions> options,
+        IWindowTracker windowTracker,
+        TokenCacheFactory cacheFactory,
+        IAccountStore accountStore,
+        ILogger<MsalAuthService> logger)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        _options = options.Value;
+        _windowTracker = windowTracker;
+        _cacheFactory = cacheFactory;
+        _accountStore = accountStore;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public Task<SignedInAccount> AddAccountAsync(
+        string tenantId,
+        EntraCloud cloud,
+        CancellationToken ct = default)
+        => AddAccountCoreAsync(RequireTenantGuid(tenantId), cloud, ct);
+
+    /// <inheritdoc />
+    public Task<SignedInAccount> AddAccountViaDeviceCodeAsync(
+        string tenantId,
+        EntraCloud cloud,
+        Func<DeviceCodeChallenge, Task> onChallenge,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(onChallenge);
+        RequireDeviceCodeAllowed();
+        return AddAccountViaDeviceCodeCoreAsync(RequireTenantGuid(tenantId), cloud, onChallenge, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task RemoveAccountAsync(
+        string objectId,
+        string tenantId,
+        EntraCloud cloud,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(objectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        await _authLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Capture how this enrollment authenticated BEFORE removing it, so we
+            // clean up the matching cache (broker vs. device-code — separate caches).
+            var removed = await _accountStore.GetByIdAsync(objectId, tenantId, ct).ConfigureAwait(false);
+            var authMethod = removed?.AuthMethod ?? AuthMethod.Broker;
+
+            await _accountStore.RemoveAsync(objectId, tenantId, ct).ConfigureAwait(false);
+
+            // The MSAL account lives in the cache of the registration this
+            // enrollment resolves to. If that registration is gone from the
+            // configuration, there is no PCA to purge from — and refusing to
+            // remove the enrollment would leave the user stuck with a dead entry.
+            var clientId = _options.ClientIdFor(cloud, tenantId);
+            if (clientId is null)
+            {
+                _logger.LogInformation(
+                    "Account removed without cache purge — no App Registration for tenant {TenantId} in cloud {Cloud} (oid {ObjectId})",
+                    tenantId,
+                    cloud,
+                    objectId);
+                return;
+            }
+
+            // Only purge the MSAL cache entry when no other tenant enrollment
+            // resolving to the SAME registration (same PCA, same cache file) with
+            // the same auth method still uses the same home identity — otherwise
+            // we'd kill the token bundle the remaining enrollment needs for silent
+            // re-acquisition. Other registrations hold separate caches, so those
+            // don't count.
+            var remaining = await _accountStore.GetAllAsync(ct).ConfigureAwait(false);
+            var stillInUse = remaining.Any(a =>
+                a.AuthMethod == authMethod
+                && string.Equals(a.ObjectId, objectId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(_options.ClientIdFor(a.Cloud, a.TenantId), clientId, StringComparison.OrdinalIgnoreCase));
+            if (!stillInUse)
+            {
+                var pca = authMethod == AuthMethod.DeviceCode
+                    ? await EnsureDeviceCodePcaAsync(clientId, cloud, ct).ConfigureAwait(false)
+                    : await EnsurePcaAsync(clientId, cloud, ct).ConfigureAwait(false);
+                var msalAccount = await FindAccountAsync(pca, authMethod, clientId, cloud, objectId).ConfigureAwait(false);
+                if (msalAccount is not null)
+                {
+                    await pca.RemoveAsync(msalAccount).ConfigureAwait(false);
+                }
+            }
+
+            _logger.LogInformation(
+                "Account removed (oid {ObjectId}, tenant {TenantId}, cloud {Cloud})",
+                objectId,
+                tenantId,
+                cloud);
+        }
+        finally
+        {
+            _authLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<SignedInAccount>> GetAllAccountsAsync(CancellationToken ct = default)
+        => _accountStore.GetAllAsync(ct);
+
+    /// <inheritdoc />
+    public Task ReorderAccountsAsync(IReadOnlyList<SignedInAccount> orderedAccounts, CancellationToken ct = default)
+        => _accountStore.ReorderAsync(orderedAccounts, ct);
+
+    /// <inheritdoc />
+    public async Task<AuthenticationResult> AcquireTokenForAccountAsync(
+        string objectId,
+        string tenantId,
+        EntraCloud cloud,
+        string[] scopes,
+        string? claimsChallenge = null,
+        bool silentOnly = false,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(objectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentNullException.ThrowIfNull(scopes);
+
+        await _authLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Route to the PCA matching how this account was enrolled. A
+            // device-code account's refresh token lives in the broker-less PCA's
+            // cache; renewing it via the broker PCA would miss the token and, on
+            // interactive fallback, reintroduce the federated-SSO wrong-account
+            // bug the device-code path exists to avoid.
+            var enrollment = await _accountStore.GetByIdAsync(objectId, tenantId, ct).ConfigureAwait(false);
+            var authMethod = enrollment?.AuthMethod ?? AuthMethod.Broker;
+            if (authMethod == AuthMethod.DeviceCode)
+            {
+                // An enrollment from before the policy was withdrawn must stop working too.
+                RequireDeviceCodeAllowed();
+            }
+
+            var clientId = RequireClientId(cloud, tenantId);
+            var pca = authMethod == AuthMethod.DeviceCode
+                ? await EnsureDeviceCodePcaAsync(clientId, cloud, ct).ConfigureAwait(false)
+                : await EnsurePcaAsync(clientId, cloud, ct).ConfigureAwait(false);
+            var account = await FindAccountAsync(pca, authMethod, clientId, cloud, objectId).ConfigureAwait(false);
+
+            if (account is null)
+            {
+                throw new MsalUiRequiredException(
+                    MsalError.UserNullError,
+                    $"No MSAL account for oid '{objectId}' in cloud '{cloud}' under client id '{clientId}'. The account must be re-enrolled.");
+            }
+
+            return authMethod == AuthMethod.DeviceCode
+                ? await AcquireForDeviceCodeAccountAsync(pca, account, tenantId, scopes, ct).ConfigureAwait(false)
+                : await AcquireForAccountAsync(pca, account, tenantId, scopes, claimsChallenge, silentOnly, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _authLock.Release();
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _authLock.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private static async Task<IAccount?> FindMsalAccountAsync(IPublicClientApplication pca, string objectId)
+    {
+        var accounts = await pca.GetAccountsAsync().ConfigureAwait(false);
+        return accounts.FirstOrDefault(
+            a => string.Equals(a.HomeAccountId?.ObjectId, objectId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // Every registration is pinned to a tenant, so a sign-in always names one.
+    // Canonical GUID formatting keeps the persisted enrollment comparable with
+    // the configuration entry regardless of how the user typed it.
+    private static string RequireTenantGuid(string tenantId)
+        => Guid.TryParse(tenantId, out var parsed)
+            ? parsed.ToString()
+            : throw new ArgumentException($"Tenant id '{tenantId}' is not a GUID.", nameof(tenantId));
+
+    /// <summary>
+    /// Client id pinned to <paramref name="tenantId"/> in <paramref name="cloud"/>, or a
+    /// mapped error naming the missing registration and pointing at Settings.
+    /// </summary>
+    private string RequireClientId(EntraCloud cloud, string tenantId)
+        => _options.ClientIdFor(cloud, tenantId)
+            ?? throw new MsalServiceException(
+                "app_registration_missing",
+                $"No App Registration is configured for tenant {tenantId} in {EntraCloudInfo.DisplayName(cloud)}.");
+
+    /// <summary>
+    /// The MSAL account for <paramref name="objectId"/>: first from the PCA's own (in-memory or,
+    /// with the policy, persisted) cache, then — for broker accounts without a disk cache — from
+    /// WAM through the discovery PCA. The account is matched by object id from the account
+    /// store, so the Windows session account is never picked up by accident.
+    /// </summary>
+    private async Task<IAccount?> FindAccountAsync(
+        IPublicClientApplication pca,
+        AuthMethod authMethod,
+        string clientId,
+        EntraCloud cloud,
+        string objectId)
+    {
+        var account = await FindMsalAccountAsync(pca, objectId).ConfigureAwait(false);
+        if (account is not null || authMethod == AuthMethod.DeviceCode || _cacheFactory.Enabled)
+        {
+            return account;
+        }
+
+        return await FindMsalAccountAsync(EnsureDiscoveryPca(clientId, cloud), objectId).ConfigureAwait(false);
+    }
+
+    /// <summary>Broker PCA for account discovery only — see <see cref="_discoveryPcas"/>.</summary>
+    private IPublicClientApplication EnsureDiscoveryPca(string clientId, EntraCloud cloud)
+    {
+        if (_discoveryPcas.TryGetValue(clientId, out var existing))
+        {
+            return existing;
+        }
+
+        var brokerOptions = new BrokerOptions(BrokerOptions.OperatingSystems.Windows)
+        {
+            Title = "ModernWork Elevate",
+            ListOperatingSystemAccounts = true,
+            MsaPassthrough = false,
+        };
+        var pca = PublicClientApplicationBuilder
+            .Create(clientId)
+            .WithAuthority(EntraCloudInfo.MsalCloudInstance(cloud), AadAuthorityAudience.AzureAdMultipleOrgs)
+            .WithRedirectUri($"ms-appx-web://microsoft.aad.brokerplugin/{clientId}")
+            .WithBroker(brokerOptions)
+            .WithClientName("ModernWorkElevate")
+            .WithLogging(OnMsalLog, MsalLogLevel.Info, enablePiiLogging: false)
+            .Build();
+        _discoveryPcas[clientId] = pca;
+        return pca;
+    }
+
+    /// <summary>
+    /// Throws a mapped error: device-code sign-in is never allowed in this app
+    /// (<see cref="ModernWorkElevateOptions.DeviceCodeAllowed"/>). Enforced here in Core, not
+    /// only by hiding the UI, so no code path can start or renew the flow.
+    /// </summary>
+    private void RequireDeviceCodeAllowed()
+    {
+        if (!_options.DeviceCodeAllowed)
+        {
+            throw new MsalServiceException(
+                "device_code_disabled",
+                "Device-code sign-in is not available in this build. Sign in with the Windows sign-in (WAM); an account that was added with device code must be removed and added again.");
+        }
+    }
+
+    private async Task<SignedInAccount> AddAccountCoreAsync(
+        string tenantId,
+        EntraCloud cloud,
+        CancellationToken ct)
+    {
+        await _authLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var clientId = RequireClientId(cloud, tenantId);
+            var pca = await EnsurePcaAsync(clientId, cloud, ct).ConfigureAwait(false);
+
+            // Explicit sign-in always surfaces the WAM account picker: no
+            // .WithAccount and no OperatingSystemAccount (the WAM plugin ignores
+            // Prompt). See memory: auth-no-sso-always-picker. The request goes to the
+            // entry's tenant — what a single-tenant app requires and a multi-
+            // tenant app accepts. The IAccount.HomeAccountId still reflects the
+            // chosen identity's HOME tenant; AuthenticationResult.TenantId carries
+            // the target.
+            // Shared-hosted asks for Graph's .default, so a first consent here lists
+            // the Azure permission too (EnrollmentScopes). Self-hosted asks for the
+            // explicit Graph scopes, and its Azure permission comes with the
+            // tenant's admin consent. WithExtraScopesToConsent is no alternative:
+            // the WAM plugin never passes it on.
+            AuthenticationResult result;
+            using (_windowTracker.BeginInteractivePrompt())
+            {
+                result = await pca.AcquireTokenInteractive(_options.EnrollmentScopes(cloud, clientId))
+                    .WithPrompt(Prompt.SelectAccount)
+                    .WithTenantId(tenantId)
+                    .WithParentActivityOrWindow(_windowTracker.GetCurrentWindowHandle())
+                    .ExecuteAsync(ct)
+                    .ConfigureAwait(false);
+            }
+
+            var account = ToEnrollment(result, tenantId, cloud, AuthMethod.Broker, pca);
+            await _accountStore.UpsertAsync(account, ct).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Account enrolled (oid {ObjectId}, tenant {TenantId}, cloud {Cloud}, client id {ClientId})",
+                account.ObjectId,
+                account.TenantId,
+                cloud,
+                clientId);
+            return account;
+        }
+        finally
+        {
+            _authLock.Release();
+        }
+    }
+
+    private async Task<SignedInAccount> AddAccountViaDeviceCodeCoreAsync(
+        string tenantId,
+        EntraCloud cloud,
+        Func<DeviceCodeChallenge, Task> onChallenge,
+        CancellationToken ct)
+    {
+        await _authLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var clientId = RequireClientId(cloud, tenantId);
+
+            // The shared-hosted registration has public client flows off on purpose, so a
+            // device-code request against it can only fail at the token endpoint
+            // (AADSTS7000218). Refuse it before any request, with a code the mapper words.
+            // The UI hides the option for these tenants; this is the second line.
+            if (_options.HostingOf(cloud, clientId) == AppRegistrationHosting.SharedHosted)
+            {
+                throw new MsalServiceException(
+                    "device_code_shared_hosted",
+                    "Device-code sign-in is not available for a shared-hosted tenant.");
+            }
+
+            var pca = await EnsureDeviceCodePcaAsync(clientId, cloud, ct).ConfigureAwait(false);
+
+            var result = await pca.AcquireTokenWithDeviceCode(
+                    _options.Scopes,
+                    deviceCodeResult =>
+                    {
+                        // MSAL invokes this once, before it starts polling. Hand the
+                        // user-facing instructions to the UI. The user code is
+                        // single-use and short-lived — never log it.
+                        var challenge = new DeviceCodeChallenge(
+                            UserCode: deviceCodeResult.UserCode,
+                            VerificationUri: deviceCodeResult.VerificationUrl,
+                            Message: deviceCodeResult.Message,
+                            ExpiresOn: deviceCodeResult.ExpiresOn);
+                        return onChallenge(challenge);
+                    })
+                .WithTenantId(tenantId)
+                .ExecuteAsync(ct)
+                .ConfigureAwait(false);
+
+            var account = ToEnrollment(result, tenantId, cloud, AuthMethod.DeviceCode, pca);
+            await _accountStore.UpsertAsync(account, ct).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Account enrolled via device code (oid {ObjectId}, tenant {TenantId}, cloud {Cloud}, client id {ClientId})",
+                account.ObjectId,
+                account.TenantId,
+                cloud,
+                clientId);
+            return account;
+        }
+        finally
+        {
+            _authLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Builds the enrollment from a sign-in result after checking that Entra issued
+    /// the token for the tenant that was asked for. With <c>.WithTenantId</c> on the
+    /// request that is always the case; the guard exists so a surprise can never
+    /// persist an enrollment whose tenant has no registration. The just-cached
+    /// account is dropped then so it doesn't linger.
+    /// </summary>
+    private SignedInAccount ToEnrollment(
+        AuthenticationResult result,
+        string requestedTenantId,
+        EntraCloud cloud,
+        AuthMethod authMethod,
+        IPublicClientApplication pca)
+    {
+        var issuedTenantId = result.TenantId ?? result.Account.HomeAccountId?.TenantId ?? string.Empty;
+        if (!Guid.TryParse(issuedTenantId, out var issued) || issued != Guid.Parse(requestedTenantId))
+        {
+            _logger.LogWarning(
+                "Sign-in rejected: requested tenant {RequestedTenantId} but the token was issued for {IssuedTenantId} (cloud {Cloud}, oid {ObjectId})",
+                requestedTenantId,
+                issuedTenantId,
+                cloud,
+                result.Account.HomeAccountId?.ObjectId);
+            _ = pca.RemoveAsync(result.Account);
+            throw new MsalServiceException(
+                "tenant_mismatch",
+                $"The sign-in landed in tenant {issuedTenantId} instead of {requestedTenantId}.");
+        }
+
+        return new SignedInAccount(
+            ObjectId: result.Account.HomeAccountId?.ObjectId ?? string.Empty,
+            TenantId: requestedTenantId,
+            Username: result.Account.Username,
+            DisplayName: result.ClaimsPrincipal?.FindFirst("name")?.Value,
+            AddedAt: DateTimeOffset.UtcNow,
+            Cloud: cloud,
+            AuthMethod: authMethod);
+    }
+
+    private async Task<AuthenticationResult> AcquireForDeviceCodeAccountAsync(
+        IPublicClientApplication pca,
+        IAccount account,
+        string tenantId,
+        string[] scopes,
+        CancellationToken ct)
+    {
+        // Device-code accounts renew silently from the broker-less PCA's own
+        // refresh token. There is deliberately NO interactive fallback here: if
+        // the RT is gone (MsalUiRequiredException), surface it so the caller can
+        // prompt the user to re-run the explicit device-code enrollment. A silent
+        // broker/interactive fallback would defeat the whole reason this account
+        // uses device code. Claims challenges likewise require a fresh device-code
+        // run, so they are not handled inline.
+        var silent = pca.AcquireTokenSilent(scopes, account).WithTenantId(tenantId);
+        var result = await silent.ExecuteAsync(ct).ConfigureAwait(false);
+        _logger.LogDebug(
+            "Device-code token acquired silently for tenant {TenantId} via {TokenSource}",
+            tenantId,
+            result.AuthenticationResultMetadata.TokenSource);
+        return result;
+    }
+
+    private async Task<AuthenticationResult> AcquireForAccountAsync(
+        IPublicClientApplication pca,
+        IAccount account,
+        string tenantId,
+        string[] scopes,
+        string? claimsChallenge,
+        bool silentOnly,
+        CancellationToken ct)
+    {
+        try
+        {
+            // .WithTenantId scopes the request to the specific tenant this
+            // enrollment targets — necessary when the same home identity is
+            // enrolled in multiple tenants and MSAL must pick the right token
+            // bundle from its cache.
+            var silent = pca.AcquireTokenSilent(scopes, account).WithTenantId(tenantId);
+            if (claimsChallenge is not null)
+            {
+                silent = silent.WithClaims(claimsChallenge).WithForceRefresh(true);
+            }
+
+            var result = await silent.ExecuteAsync(ct).ConfigureAwait(false);
+            _logger.LogDebug(
+                "Token acquired silently for tenant {TenantId} via {TokenSource}",
+                tenantId,
+                result.AuthenticationResultMetadata.TokenSource);
+            return result;
+        }
+        catch (MsalUiRequiredException) when (!silentOnly)
+        {
+            // The user just dismissed a sign-in window for this enrollment: the other token
+            // requests of the same click fail instead of opening one window after another.
+            var promptKey = $"{account.HomeAccountId?.ObjectId}|{tenantId}|{pca.AppConfig.ClientId}";
+            if (_dismissedPrompts.TryGetValue(promptKey, out var dismissedAt)
+                && DateTimeOffset.UtcNow - dismissedAt < DismissedPromptQuietPeriod)
+            {
+                throw new MsalClientException(MsalError.AuthenticationCanceledError, "The sign-in window was closed a moment ago.");
+            }
+
+            // Re-auth required. Stay pinned to the same account and the same target tenant.
+            var interactive = pca.AcquireTokenInteractive(scopes)
+                .WithAccount(account)
+                .WithTenantId(tenantId)
+                .WithParentActivityOrWindow(_windowTracker.GetCurrentWindowHandle());
+            if (claimsChallenge is not null)
+            {
+                interactive = interactive.WithClaims(claimsChallenge);
+            }
+
+            try
+            {
+                AuthenticationResult result;
+                using (_windowTracker.BeginInteractivePrompt())
+                {
+                    result = await interactive.ExecuteAsync(ct).ConfigureAwait(false);
+                }
+
+                _dismissedPrompts.Remove(promptKey);
+                _logger.LogDebug(
+                    "Token acquired interactively for tenant {TenantId} via {TokenSource}",
+                    tenantId,
+                    result.AuthenticationResultMetadata.TokenSource);
+                return result;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException
+                || ex is MsalException { ErrorCode: MsalError.AuthenticationCanceledError })
+            {
+                _dismissedPrompts[promptKey] = DateTimeOffset.UtcNow;
+                throw;
+            }
+        }
+    }
+
+    private async Task<IPublicClientApplication> EnsurePcaAsync(string clientId, EntraCloud cloud, CancellationToken ct)
+    {
+        if (_pcas.TryGetValue(clientId, out var existing))
+        {
+            return existing;
+        }
+
+        ct.ThrowIfCancellationRequested();
+
+        var pca = PublicClientApplicationBuilder
+            .Create(clientId)
+
+            // Work-or-school authority of the sovereign cloud. Every request
+            // names its tenant via .WithTenantId, so a single-tenant registration
+            // (which Entra refuses on /organizations, AADSTS50194) works exactly
+            // like a multi-tenant one used in several tenants.
+            .WithAuthority(EntraCloudInfo.MsalCloudInstance(cloud), AadAuthorityAudience.AzureAdMultipleOrgs)
+            .WithRedirectUri($"ms-appx-web://microsoft.aad.brokerplugin/{clientId}")
+            .WithBroker(new BrokerOptions(BrokerOptions.OperatingSystems.Windows)
+            {
+                Title = "ModernWork Elevate",
+
+                // Do NOT surface the Windows session account as a built-in candidate.
+                // ModernWork Elevate is a privileged-access tool — the admin identity is
+                // typically separate from the daily Windows login. See memory:
+                // auth-no-sso-always-picker. Account discovery after a restart uses the
+                // separate discovery PCA (EnsureDiscoveryPca), never this one.
+                ListOperatingSystemAccounts = false,
+                MsaPassthrough = false,
+            })
+            .WithClientName("ModernWorkElevate")
+            .WithLogging(OnMsalLog, MsalLogLevel.Info, enablePiiLogging: false)
+            .Build();
+
+        // Register the cache. MSAL holds the helper alive through the cache
+        // callbacks, so we don't need to root it ourselves.
+        await _cacheFactory
+            .RegisterAsync(pca.UserTokenCache, $"msal-{clientId}.cache", ct)
+            .ConfigureAwait(false);
+        _pcas[clientId] = pca;
+        return pca;
+    }
+
+    private async Task<IPublicClientApplication> EnsureDeviceCodePcaAsync(string clientId, EntraCloud cloud, CancellationToken ct)
+    {
+        if (_deviceCodePcas.TryGetValue(clientId, out var existing))
+        {
+            return existing;
+        }
+
+        ct.ThrowIfCancellationRequested();
+
+        // Broker-LESS public client for the device-code escape hatch. No
+        // .WithBroker (device code is incompatible with WAM) and no redirect URI
+        // (device code doesn't use one). Unlike the broker PCA — where WAM owns
+        // the refresh tokens — this PCA persists its own RTs, so it MUST have a
+        // dedicated cache file that never collides with the broker caches.
+        var pca = PublicClientApplicationBuilder
+            .Create(clientId)
+            .WithAuthority(EntraCloudInfo.MsalCloudInstance(cloud), AadAuthorityAudience.AzureAdMultipleOrgs)
+            .WithClientName("ModernWorkElevate")
+            .WithLogging(OnMsalLog, MsalLogLevel.Info, enablePiiLogging: false)
+            .Build();
+
+        await _cacheFactory
+            .RegisterAsync(pca.UserTokenCache, $"msal-devicecode-{clientId}.cache", ct)
+            .ConfigureAwait(false);
+        _deviceCodePcas[clientId] = pca;
+        return pca;
+    }
+
+    private void OnMsalLog(MsalLogLevel level, string message, bool containsPii)
+    {
+        if (containsPii)
+        {
+            return;
+        }
+
+        // MSAL's Info level is wire-protocol chatter — hundreds of megabytes
+        // per day-file. From this app's perspective that is debug detail: it
+        // only reaches the log when the user selects Debug in Settings.
+        var mappedLevel = level switch
+        {
+            MsalLogLevel.Error => LogLevel.Error,
+            MsalLogLevel.Warning => LogLevel.Warning,
+            _ => LogLevel.Debug,
+        };
+
+        // IsEnabled first: at the default level most of this is dropped anyway, and
+        // there is no reason to normalise a message on its way to nowhere.
+        if (!_logger.IsEnabled(mappedLevel) || !_msalLogThrottle.ShouldLog(mappedLevel, message))
+        {
+            return;
+        }
+
+        _logger.Log(mappedLevel, "[MSAL] {Message}", message);
+    }
+}

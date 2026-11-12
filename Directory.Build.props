@@ -1,0 +1,56 @@
+<Project>
+
+  <!--
+    Solution-wide build settings for ModernWork Elevate.
+    Project-specific settings (TFM, OutputType, package refs) stay in each .csproj.
+  -->
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <Deterministic>true</Deterministic>
+
+    <!--
+      Ziel ist .NET 10 LTS (framework-dependent). LatestMajor
+      startet die App auch mit einer neueren installierten Desktop Runtime.
+    -->
+    <RollForward>LatestMajor</RollForward>
+
+    <!--
+      Analyzer-Stand bewusst auf 8.0 fixiert: Mit TreatWarningsAsErrors würden die mit
+      .NET 10 neu hinzugekommenen CA-Regeln sonst den Build brechen, ohne dass sich am
+      Code etwas geändert hat. Anheben ist ein eigener, bewusster Schritt.
+    -->
+    <AnalysisLevel>8.0</AnalysisLevel>
+
+    <!--
+      Lieferketten-Sicherheit: alle (auch transitiven) Pakete gegen bekannte Schwachstellen
+      prüfen. Treffer bleiben sichtbare Warnungen, brechen den Build aber nicht – sonst
+      blockiert eine neue Advisory über Nacht jeden Build.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904;NU1900</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <!--
+    Assembly-Metadaten (Explorer → Eigenschaften → Details, Programme und Features).
+    Company/Authors an den CN des eigenen Code-Signing-Zertifikats anpassen, damit
+    Audit-Werkzeuge (AppLocker/WDAC-Publisher-Regeln) konsistent bleiben.
+    Version zentral hier pflegen – build\build.ps1 übernimmt sie ins MSI.
+  -->
+  <PropertyGroup>
+    <Version>1.3.6</Version>
+    <Authors>mistermodernwork</Authors>
+    <Company>ModernWork Elevate</Company>
+    <Product>ModernWork Elevate</Product>
+    <Copyright>© $([System.DateTime]::UtcNow.Year) mistermodernwork. MIT License.</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.556" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
