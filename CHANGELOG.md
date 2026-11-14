@@ -3,6 +3,15 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
+## Unreleased
+
+- Dependencies: Microsoft.Extensions.* 10.0.15 (.NET 10 servicing), Microsoft.Graph 5.105.0 (pulls
+  Microsoft.IdentityModel 8.x instead of the deprecated 7.6), System.Drawing.Common 4.7.3,
+  Serilog.Sinks.Console 6.1.1; test tooling updated.
+- Links open in the browser only when they are absolute `https` URLs.
+- CI runs with a read-only `GITHUB_TOKEN`; the release job reads the tag name from the
+  environment instead of interpolating it into the script.
+
 ## 1.3.6
 
 First public release; contains everything listed under 1.3.1 and 1.3.2.
