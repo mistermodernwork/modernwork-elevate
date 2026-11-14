@@ -12,6 +12,11 @@ updates:
         patterns: ["Microsoft.Identity.*"]
       kiota:
         patterns: ["Microsoft.Kiota.*"]
+    ignore:
+      # Kiota 2.x needs Microsoft.Graph 6; the app is on Graph SDK v5, and restore fails
+      # with NU1608. Revisit together with a Graph SDK upgrade.
+      - dependency-name: "Microsoft.Kiota.*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
