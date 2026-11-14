@@ -305,7 +305,8 @@ running; what you clicked may not have taken effect, so check it and try again. 
 the log.
 
 **Anything else** — **Settings → Diagnostics → Open log folder**. The log contains no passwords, no
-tokens and no justification text; it is safe to attach to a ticket.
+tokens, no sign-in names (UPN) or mail addresses and no justification text; it is safe to attach
+to a ticket.
 
 ## What lands on your machine
 

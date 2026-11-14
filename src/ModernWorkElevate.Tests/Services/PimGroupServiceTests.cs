@@ -118,4 +118,28 @@ public sealed class PimGroupServiceTests
             .OfType<AuthContextRequestOption>());
         Assert.Contains("\"c3\"", option.ClaimsJson, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task ActivateAsync_ErrorMessageNamingTheUser_IsLoggedWithoutTheUpn()
+    {
+        const string error = """
+            { "error": { "code": "Authorization_RequestDenied", "message": "Insufficient privileges for user 'alice@contoso.com'.", "innerError": { "request-id": "req-upn-2" } } }
+            """;
+        var handler = new FakeHttpMessageHandler(
+            FakeHttpMessageHandler.JsonResponse(error, HttpStatusCode.Forbidden));
+        var logger = new CapturingLogger<PimGroupService>();
+        var service = new PimGroupService(
+            GraphClientTestBuilder.Build(handler),
+            new Mock<IGroupResolver>().Object,
+            logger);
+
+        var eligibility = new PimEligibility(PimResourceKind.GroupMembership, "grp-project-x", "group-1", "group-1", "user-oid-1", null, false);
+        var result = await service.ActivateAsync(new ActivationRequest(eligibility, TimeSpan.FromHours(1), "Project work", null));
+
+        Assert.False(result.IsSuccess);
+        Assert.NotEmpty(logger.Entries);
+        Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Authorization_RequestDenied", logger.AllText, StringComparison.Ordinal);
+        Assert.Contains("req-upn-2", logger.AllText, StringComparison.Ordinal);
+    }
 }

@@ -426,7 +426,7 @@ public sealed class PimAzureResourceService : IPimAzureResourceService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogDebug(ex, "Reading the children of {Scope} failed; skipping that subtree", scopeId);
+            _logger.LogDebug(LogRedaction.ForLog(ex), "Reading the children of {Scope} failed; skipping that subtree", scopeId);
             return [];
         }
     }
@@ -513,7 +513,7 @@ public sealed class PimAzureResourceService : IPimAzureResourceService
             "PIM Azure resource request failed: {Code} (HTTP {Status}). {ArmMessage}",
             error.Code,
             error.StatusCode,
-            error.Detail);
+            LogRedaction.Redact(error.Detail));
 
         return new(
             RequestId: string.Empty,

@@ -12,5 +12,6 @@ and no telemetry.
   No passwords and no tokens are written to disk. Details:
   [What lands on your machine](docs/user-guide.md#what-lands-on-your-machine).
 - **Logs** contain object ids, tenant ids and ticket numbers, but no tokens, no justification text
-  and no user principal names.
+  and no sign-in names (UPN) or mail addresses — not even where a Microsoft error message names
+  the user; those are masked before they are written.
 - **Terms:** the MIT [LICENSE](LICENSE).

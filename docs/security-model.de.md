@@ -15,7 +15,7 @@ und ändert Rollenzuweisungen in Microsoft Entra. Daraus folgen alle Entscheidun
 | Manipulation der Konfiguration durch andere Benutzer | Benutzerdatenordner mit geschützter ACL (nur Benutzer + SYSTEM). Geräterichtlinie in HKLM, nur von Administratoren schreibbar, schlägt jede Benutzereinstellung. |
 | Zu weitreichende Berechtigungen | Nur delegierte Berechtigungen, minimal; kein Client-Secret, keine Anwendungsberechtigungen. Graph- und ARM-Tokens werden getrennt angefordert. |
 | Unbemerkte Nutzung einer alten Sitzung | Empfohlen: Authentifizierungskontext mit Anmeldehäufigkeit „jedes Mal" für privilegierte Rollen ([fresh-sign-in.md](fresh-sign-in.md)); die App markiert Rollen ohne. |
-| Datenabfluss über Logs | Keine Tokens, keine Begründungstexte, keine UPNs oder Mailadressen – nur Objekt-IDs, Tenant-IDs und Ticketnummern. |
+| Datenabfluss über Logs | Keine Tokens, keine Begründungstexte, keine UPNs oder Mailadressen – nur Objekt-IDs, Tenant-IDs und Ticketnummern. Fehlermeldungen von Graph, ARM und Anmeldung, die den Benutzer nennen, werden mit maskiertem UPN geloggt (`LogRedaction`); Fehlercode, HTTP-Status und Request-ID bleiben erhalten. |
 | Lieferkette | NuGet-Audit über alle transitiven Pakete; verwundbare Abhängigkeiten auf gepatchte Versionen fixiert; Dependabot; Signaturbericht bei jedem Build. |
 | Datenabfluss an Dritte | Keine Telemetrie, kein Update-Server, kein Backend. Netzwerkverkehr nur zu Microsoft Entra, Microsoft Graph und Azure Resource Manager. |
 

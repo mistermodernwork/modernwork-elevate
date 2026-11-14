@@ -231,7 +231,7 @@ public sealed class PimRoleService : IPimRoleService
                     string.Join(',', ExpansionLevels[level]),
                     error.Error?.Code,
                     error.ResponseStatusCode,
-                    error.Error?.Message);
+                    LogRedaction.Redact(error.Error?.Message));
                 _expansionLevel = level + 1;
             }
         }
@@ -244,7 +244,7 @@ public sealed class PimRoleService : IPimRoleService
             error.Error?.Code,
             error.ResponseStatusCode,
             error.Error?.InnerError?.RequestId,
-            error.Error?.Message);
+            LogRedaction.Redact(error.Error?.Message));
 
         return new(
             RequestId: string.Empty,

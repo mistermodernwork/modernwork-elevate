@@ -249,7 +249,7 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "{Label} fetch failed for account oid {ObjectId} tenant {TenantId}",
                 fetchLabel,
                 account.ObjectId,
@@ -286,7 +286,7 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "Azure resource roles fetch failed for account oid {ObjectId} tenant {TenantId}",
                 account.ObjectId,
                 account.TenantId);

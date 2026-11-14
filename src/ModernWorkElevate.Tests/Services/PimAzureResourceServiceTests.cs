@@ -1,6 +1,7 @@
 namespace ModernWorkElevate.Tests.Services;
 
 using System.Net;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModernWorkElevate.Core.Arm;
 using ModernWorkElevate.Core.Models;
@@ -444,10 +445,29 @@ public sealed class PimAzureResourceServiceTests
         Assert.DoesNotContain("ticketSystem", body, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static PimAzureResourceService Build(HttpMessageHandler handler) => new(
+    [Fact]
+    public async Task ActivateAsync_AuthorizationFailedNamingTheUser_IsLoggedWithoutTheUpn()
+    {
+        // ARM's AuthorizationFailed text names the caller by UPN; the log keeps the
+        // code and status, the user stays the object id only.
+        var handler = new FakeHttpMessageHandler(
+            FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-error-authorization-failed.json"), HttpStatusCode.Forbidden));
+        var logger = new CapturingLogger<PimAzureResourceService>();
+        var service = Build(handler, logger);
+
+        var result = await service.ActivateAsync(SampleRequest());
+
+        Assert.False(result.IsSuccess);
+        Assert.NotEmpty(logger.Entries);
+        Assert.DoesNotContain("@example.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AuthorizationFailed", logger.AllText, StringComparison.Ordinal);
+        Assert.Contains("403", logger.AllText, StringComparison.Ordinal);
+    }
+
+    private static PimAzureResourceService Build(HttpMessageHandler handler, ILogger<PimAzureResourceService>? logger = null) => new(
         new HttpClient(handler) { BaseAddress = new Uri("https://management.azure.com/") },
         UserOid,
-        NullLogger<PimAzureResourceService>.Instance);
+        logger ?? NullLogger<PimAzureResourceService>.Instance);
 
     private static PimEligibility SampleEligibility() => new(
         PimResourceKind.AzureResourceRole,

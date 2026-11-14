@@ -291,7 +291,7 @@ public sealed partial class AddTenantPanelViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to add account (tenant {TenantId}, cloud {Cloud})", target.TenantId, target.Cloud);
+            _logger.LogError(LogRedaction.ForLog(ex), "Failed to add account (tenant {TenantId}, cloud {Cloud})", target.TenantId, target.Cloud);
             ShowSignInError(ex, target);
         }
         finally
@@ -352,7 +352,7 @@ public sealed partial class AddTenantPanelViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Device-code sign-in failed for tenant {TenantId} (cloud {Cloud})", target.TenantId, target.Cloud);
+            _logger.LogError(LogRedaction.ForLog(ex), "Device-code sign-in failed for tenant {TenantId} (cloud {Cloud})", target.TenantId, target.Cloud);
             ShowSignInError(ex, target);
         }
         finally

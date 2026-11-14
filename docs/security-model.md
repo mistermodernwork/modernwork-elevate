@@ -15,7 +15,7 @@ assignments in Microsoft Entra. Every design decision below follows from that.
 | Tampering with configuration by another user or malware in another profile | Per-user data folders with a protected ACL (user + SYSTEM only). Machine policy in HKLM, writable by administrators only, overrides every per-user setting. |
 | Over-privileged app | Delegated permissions only, least privilege; no client secret, no application permissions. Graph and ARM tokens are requested separately. |
 | Silent use of a stale session | Recommended: authentication context with sign-in frequency "every time" on privileged roles ([fresh-sign-in.md](fresh-sign-in.md)); the app flags roles without one. |
-| Data leakage through logs | No tokens, no justification text, no UPNs or mail addresses in logs — object ids, tenant ids and ticket numbers only. |
+| Data leakage through logs | No tokens, no justification text, no UPNs or mail addresses in logs — object ids, tenant ids and ticket numbers only. Graph, ARM and sign-in error messages that name the user are logged with the UPN masked (`LogRedaction`); error code, HTTP status and request id stay. |
 | Supply chain | NuGet audit on all transitive packages; vulnerable dependencies pinned to patched versions; Dependabot; signature report for every build. |
 | Data leakage to third parties | No telemetry, no update server, no backend. Network traffic goes to Microsoft Entra, Microsoft Graph and Azure Resource Manager only. |
 
