@@ -17,6 +17,10 @@ updates:
       # with NU1608. Revisit together with a Graph SDK upgrade.
       - dependency-name: "Microsoft.Kiota.*"
         update-types: ["version-update:semver-major"]
+      # The app targets .NET 10 LTS; Microsoft.Extensions.* majors follow the .NET major and
+      # move together with the target framework, not on their own.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
