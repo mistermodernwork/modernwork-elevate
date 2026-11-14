@@ -12,16 +12,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Graph" Version="5.56.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Graph" Version="5.105.0" />
     <PackageReference Include="Microsoft.Identity.Client" Version="4.92.0" />
     <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.92.0" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.92.0" />
   </ItemGroup>
 
   <!--
-    Transitive Kiota packages (via Microsoft.Graph 5.56) lifted to a patched version.
+    Transitive Kiota packages (via Microsoft.Graph 5.105 → Graph.Core 3.2.5, which still
+    accepts Kiota >= 1.21.1) lifted to a patched version.
     Kiota < 1.22.0 keeps sensitive headers (Cookie, Proxy-Authorization) on cross-host redirects —
     GHSA-7j59-v9qr-6fq9 / CVE-2026-44503, NuGet audit NU1903. All Kiota packages share one version,
     so they are pinned together. Remove once Microsoft.Graph itself depends on >= 1.22.

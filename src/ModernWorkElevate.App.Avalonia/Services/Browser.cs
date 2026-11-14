@@ -11,6 +11,14 @@ internal static class Browser
 {
     public static void Open(string url, string target, ILogger logger)
     {
+        // ShellExecute runs whatever it is handed — a file: or UNC path would start a program.
+        // Only absolute https links ever reach the browser.
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+        {
+            logger.LogWarning("Refused to open the {Target}: not an https URL", target);
+            return;
+        }
+
         try
         {
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });

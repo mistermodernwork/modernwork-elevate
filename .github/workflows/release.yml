@@ -38,10 +38,14 @@ jobs:
       - name: Check tag matches version
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
+        # The tag name reaches the script through the environment, never through ${{ }}
+        # interpolation, so a crafted tag cannot inject PowerShell into the release job.
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           [xml] $props = Get-Content Directory.Build.props
           $version = ($props.Project.PropertyGroup | Where-Object { $_['Version'] } | Select-Object -First 1)['Version'].InnerText
-          $tag = '${{ github.ref_name }}'.TrimStart('v')
+          $tag = $env:TAG_NAME.TrimStart('v')
           if ($version -ne $tag) { throw "Tag v$tag does not match <Version>$version</Version> in Directory.Build.props." }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
