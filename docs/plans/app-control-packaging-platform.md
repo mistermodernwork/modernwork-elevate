@@ -34,7 +34,7 @@ wird als **Software-Profil** gespeichert und beim nächsten Mal wiederverwendet.
 | F1 | **Code-Signing-Service** | Engineers laden Skripte/Binaries hoch (UI, API, CLI, Pipeline) und bekommen sie signiert zurück. |
 | F2 | **Remediation-Signing** | Intune-Remediations (Detect + Remediate) separat signieren, optional mit eigenem Zertifikat. |
 | F3 | **Auswählbares Zertifikat** | Zertifikate sind konfigurierbar (Key Vault, Artifact Signing, HSM, Zertifikatsspeicher, PFX) und je Profil/Job wählbar. |
-| F4 | **Automatische Paketierung mit PSADT** | Pakete auf Basis PSAppDeployToolkit v4 automatisch erzeugen. |
+| F4 | **Automatische Paketierung mit PSADT** | Pakete auf Basis PSAppDeployToolkit 4.1 automatisch erzeugen. |
 | F5 | **Versionssteuerung** | „Immer neueste Version" oder gezielt eine/mehrere Versionen auswählen und bauen. |
 | F6 | **GUI-Builder** | Visueller Builder für Pre-/Post-Install, Pre-/Post-Uninstall, Repair, Dialoge, Prozesse schließen, Registry, Dateien, … |
 | F7 | **Software-Profile** | Alle Einstellungen eines Produkts speicher-, versionier-, kopier- und exportierbar. |
@@ -113,8 +113,32 @@ Actions / Azure DevOps (keine Secrets).
 | Datenbank | **Azure SQL** (EF Core); alternativ PostgreSQL für On-Prem | relational: Profile, Versionen, Audit |
 | Artefakte | **Azure Blob Storage** (immutable, versioniert) | Original-Installer, Pakete, Signaturberichte |
 | Secrets | **Azure Key Vault** | Tokens für GitHub/DevOps, Webhook-URLs, PFX-Passwörter |
-| Hosting | **Azure Container Apps** (API/UI) + Windows-Worker-VMSS; Bicep-Templates | einfach skalierbar; On-Prem-Variante per Docker/IIS möglich |
+| Hosting | **On-Prem (Windows-Dienst/IIS) oder Azure (Container Apps + Windows-Worker)**, umschaltbar – siehe 3.2a | ein Codestand für beide Betriebsmodi |
 | Logging | Serilog → Application Insights; Audit separat in DB (append-only) | Audit muss unveränderbar sein |
+
+### 3.2a Betriebsmodus: On-Prem ↔ Cloud umschaltbar
+
+Start mit **einem Tenant**. Die Plattform läuft **on-prem oder in Azure – umschaltbar per
+Konfiguration** (`Hosting:Mode = OnPrem | Azure | Hybrid`), ohne Codeänderung. Jede Infrastruktur-
+Abhängigkeit steckt hinter einer Schnittstelle mit zwei Implementierungen:
+
+| Schnittstelle | On-Prem | Azure |
+|---|---|---|
+| `IDatabase` (EF Core) | SQL Server (Express reicht für den Start) | Azure SQL |
+| `IArtifactStore` | Dateisystem / SMB-Share (schreibgeschützt nach Abschluss, Hash-geprüft) | Blob Storage (immutable) |
+| `IJobQueue` | Datenbank-Queue (Tabelle mit Leasing) | Azure Service Bus |
+| `ISecretStore` | DPAPI-geschützt (Machine-Scope) / Windows-Zertifikatsspeicher | Azure Key Vault |
+| `ISigningProvider` | ADCS-Zertifikat im Speicher / HSM | Key Vault / Artifact Signing |
+| `ITelemetry` | Serilog → Datei + Windows-Ereignisprotokoll | Application Insights |
+| Hosting API/UI | Windows-Dienst (Kestrel) oder IIS | Azure Container Apps / App Service |
+| Worker | Windows-Dienst auf demselben oder eigenem Server | Windows-VM/VMSS |
+
+- **Minimal-Installation on-prem:** ein Windows Server 2025 mit API, UI, Worker und SQL Express, installiert per MSI/Setup-Skript.
+- **Cloud-Integration immer möglich:** Entra ID (Anmeldung), Microsoft Graph (Mail, Intune, Teams),
+  Logic Apps, GitHub und Azure DevOps funktionieren in beiden Modi; on-prem nur ausgehend über HTTPS (Proxy-fähig).
+- **Hybrid:** API/UI in Azure, Worker on-prem (z. B. wegen HSM oder ADCS-Zertifikat) – Worker holt Jobs ausgehend ab, kein eingehender Port nötig.
+- **Umzug** on-prem → Azure über Export/Import-Werkzeug (DB-Migration + Artefakte kopieren + Hash-Prüfung).
+- Mehrere Tenants: Datenmodell bekommt ab v1 eine `TenantId`-Spalte (Standardwert = einziger Tenant), damit Multi-Tenant später ohne Migration der Daten möglich ist.
 
 ### 3.3 Projektstruktur (Vorschlag, eigenes Repo `modernwork-appforge`)
 
@@ -177,12 +201,26 @@ tests/
 
 **Zertifikate auswählbar (F3)** – Abstraktion `ISigningProvider`:
 
-| Provider | Einsatz |
-|---|---|
-| `AzureKeyVaultProvider` | Zertifikat + Schlüssel in Key Vault (HSM-backed), Signieren remote (z. B. über AzureSignTool-Logik) |
-| `ArtifactSigningProvider` | Azure Artifact Signing (vormals Trusted Signing), Zertifikatsprofil wählbar |
-| `CertStoreProvider` | Zertifikat im Windows-Zertifikatsspeicher des Workers (Thumbprint), auch Smartcard/HSM via KSP |
-| `PfxProvider` | PFX aus Key Vault (nur Test/Lab, in Produktion per Richtlinie sperrbar) |
+| Provider | Einsatz | Priorität |
+|---|---|---|
+| `CertStoreProvider` | **On-Prem-PKI (ADCS) – Ist-Zustand.** Zertifikat aus Vorlage „Code Signing“ im Speicher `LocalMachine\My` des Workers (Thumbprint), auch Smartcard/Netzwerk-HSM über KSP/CSP. Optional automatische Registrierung/Verlängerung über `certreq`/Auto-Enrollment | v1 (Pflicht) |
+| `AzureKeyVaultProvider` | **Hybrid, empfohlener Zielweg:** Key Vault (Premium/Managed HSM) erzeugt den Schlüssel und einen CSR, die **On-Prem-ADCS signiert den CSR** – der private Schlüssel verlässt das HSM nie, die Vertrauenskette bleibt eure PKI. Signieren remote (Digest-Signing wie AzureSignTool) | v1 |
+| `ArtifactSigningProvider` | **Cloud:** Azure Artifact Signing (vormals Trusted Signing). Profil *Private Trust* für interne Skripte/Pakete und App Control, *Public Trust* für extern verteilte Software. Achtung: Blattzertifikate sind kurzlebig (Tage) – WDAC-Regeln deshalb auf Ebene Aussteller-CA + EKU/Profil, nie auf das Blattzertifikat | v1 |
+| `ExternalCaProvider` | **Externe/öffentliche CA:** Zertifikat einer öffentlichen CA (z. B. DigiCert, GlobalSign, Sectigo) entweder über die Key-Vault-CA-Integration ausgestellt (dann `AzureKeyVaultProvider`) oder über den Cloud-Signing-Dienst des Anbieters (KSP/PKCS#11 bzw. Remote-Signing-API) als Plug-in | v2 |
+| `PfxProvider` | PFX aus dem Secret-Speicher – nur Test/Lab, in Produktion per Richtlinie gesperrt | v1 (Lab) |
+
+> **Hinweis Microsoft Cloud PKI (Intune):** Cloud PKI stellt nur Geräte-/Benutzerzertifikate per SCEP
+> an Intune-verwaltete Geräte aus; der private Schlüssel entsteht auf dem Gerät. Für einen zentralen
+> Code-Signing-Dienst ist es **nicht geeignet**. „Cloud-PKI für Code Signing“ bedeutet in diesem Plan
+> deshalb Azure Artifact Signing oder Key Vault (mit eigener oder externer CA).
+
+**Migrationspfad Zertifikate** (ohne Neubau der Plattform, nur Konfiguration):
+1. Start: ADCS-Zertifikat im Worker-Zertifikatsspeicher (`CertStoreProvider`)
+2. Härtung: Schlüssel nach Key Vault/HSM, CSR von ADCS signiert (`AzureKeyVaultProvider`)
+3. Cloud: Artifact Signing (Private Trust) für neue Pakete; WDAC-Basisrichtlinie vertraut beiden Ketten parallel, bis die alte ausläuft
+4. Extern: öffentliches Zertifikat nur dort, wo Geräte außerhalb der eigenen Richtlinie vertrauen müssen
+
+Die WDAC-Signer-Regeln für jedes angebundene Zertifikat erzeugt die Plattform selbst (Abschnitt 4.9), damit ein Zertifikatswechsel nicht zum Ausfall auf den Geräten führt.
 
 Pro Zertifikat konfigurierbar: Anzeigename, Verwendungszweck (Pakete / Skripte / Remediations /
 Test), erlaubte Rollen/Gruppen, Approval-Pflicht, Zeitstempel-URL, Ablaufwarnung (z. B. 60/30/7 Tage
@@ -218,7 +256,7 @@ per Notification). Auswahl in Profil, Job oder API-Parameter `certificateId`; De
 7. Ergebnis wird als Vorschlag in das Profil geschrieben; Admin bestätigt nur noch
 
 **Paketerzeugung**
-- PSADT v4 Template (Version im Profil pinnbar, Standard = freigegebene Toolkit-Version der Plattform)
+- PSADT 4.1 Template (Version im Profil pinnbar, Standard = freigegebene Toolkit-Version der Plattform)
 - Generator erzeugt `Invoke-AppDeployToolkit.ps1` aus Profil + Bausteinen (Abschnitte
   *Pre-Install, Install, Post-Install, Pre-Uninstall, Uninstall, Post-Uninstall, Pre-Repair, Repair, Post-Repair*)
 - Branding/Sprache/Logo aus globalen Standards (`Config/config.psd1`, Strings)
@@ -311,6 +349,36 @@ Draft → Submitted → [Automatische Prüfungen] → PendingApproval → Approv
   (Einreicher darf nicht selbst freigeben)
 - Eskalation/Timeout (z. B. nach 48 h Erinnerung, nach 5 Tagen Ablehnung)
 - Freigabe enthält immer: Hashes, Diff zum Vorgänger, Prüfergebnisse, Testprotokoll
+
+#### Freigabestufen (Standard, festgelegt)
+
+Herleitung aus den bisherigen Projekten: In den Repos gibt es **keine ausdrücklich definierten
+Freigabestufen**. Übernommen werden die gelebten Regeln:
+- *ModernWork Elevate* → Signer-Regeln vor Hash-Regeln, Signaturbericht vor jeder Regel prüfen,
+  WDAC-Änderungen **zuerst im Audit-Modus** (CodeIntegrity-Events 3076/3077), dann erzwingen;
+  Prinzip „Just-in-Time + Freigabe für privilegierte Aktionen“ (PIM)
+- *M365 Apps MEC Packager* → automatischer Build bekannter Produkte, Supersedence, Abschluss erst
+  nach erfolgreichem Kopieren, Bericht per Mail
+- *Contributing-Regeln* → Review durch eine zweite Person vor dem Merge
+
+Daraus folgt ein **risikobasiertes Stufenmodell**. Die Stufe wird von der Plattform **automatisch
+ermittelt** (höchste zutreffende Regel gewinnt); Stufen sind pro Mandant konfigurierbar, das hier
+ist der Auslieferungsstandard.
+
+| Stufe | Name | Wer gibt frei | Gilt für (automatische Einstufung) |
+|---|---|---|---|
+| **0** | Automatisch | niemand (nur Benachrichtigung) | Signieren mit **Test-/Lab-Zertifikat**; Build und Verteilung **in den Test-Ring**; neue Herstellerversion eines bereits freigegebenen Profils, wenn Herausgeber-Signatur gültig **und unverändert**, Profil-Revision unverändert, alle Tests grün; Skripte aus einer Pipeline mit geschütztem Branch und Pflicht-Review (das Review ist die Freigabe) |
+| **1** | Fachliche Freigabe | App-Owner **oder** Packager (≠ Einreicher) | Neue Version → **Pilot-/Produktions-Ring**; Änderung an einem bestehenden Profil (Bausteine, Parameter); Signieren eigener Skripte (Engineer-Tools, PSADT-Erweiterungen) mit Produktivzertifikat |
+| **2** | Vier-Augen + Security | Packager **und** App-Control-/Security-Verantwortlicher (beide ≠ Einreicher) | **Neues Produkt** im Katalog; **neuer oder geänderter Herausgeber/Signer** beim Hersteller; Paket braucht **Hash-Regeln** (unsignierte Dateien); **eigener Code** im GUI-Builder (Expertenmodus) oder neuer/geänderter Baustein; **Intune-Remediations, Platform- und Compliance-Skripte** (laufen als SYSTEM); Neusignieren fremder Dateien |
+| **3** | Change / CAB | Security **und** Change-Board (bzw. Plattform-Owner) | Änderung der **WDAC-Basisrichtlinie**; Supplemental Policy von **Audit → Enforced**; **Anbinden, Tauschen oder Widerrufen eines Signing-Zertifikats**; Änderung an Freigaberegeln oder Rollen; Notfall-Sperre eines Produkts aufheben |
+
+Feste Regeln (nicht abschaltbar):
+- Einreicher darf **nie** selbst freigeben; Service Principals dürfen einreichen, aber nicht freigeben.
+- Jede Freigabe zeigt: Hashes, Diff zum Vorgänger (Profil, Skript, Signer), Prüf- und Testergebnisse, betroffene WDAC-Regeln, Zielringe.
+- WDAC-Policies gehen **immer zuerst im Audit-Modus** raus; der Wechsel auf Enforced ist Stufe 3 und frühestens nach einer konfigurierbaren Beobachtungszeit (Standard 7 Tage ohne neue 3076/3077-Events für das Produkt) möglich.
+- Ablauf: Stufe 1 = 2 Werktage, Stufe 2 = 3 Werktage, Stufe 3 = nächster CAB-Termin; danach Eskalation an Vertretung bzw. Plattform-Admin.
+- **Notfall-Weg** (z. B. kritisches Sicherheitsupdate): Stufe 2 darf durch einen Security-Verantwortlichen allein freigegeben werden, wird als `Emergency` markiert und muss innerhalb von 2 Werktagen nachträglich bestätigt werden.
+- Ringe: `Test` (Stufe 0) → `Pilot` (Stufe 1, automatisch nach X Tagen ohne Fehler vorgeschlagen) → `Produktion` (Stufe 1).
 
 **Kanäle** (`INotificationChannel`, frei kombinierbar je Profil/Ereignis):
 
@@ -476,7 +544,7 @@ Ablehnung per Mail-Link funktioniert; Logic App kann freigeben.
 - Quellen: winget, Evergreen, URL, GitHub Releases, Upload
 - Versionsmodi Latest / Pinned / Multiple / Ring
 - Automatische Analyse (Installer-Typ, Silent-Switches, MSI-Eigenschaften, Icon)
-- PSADT-v4-Generator mit Standard-Bausteinen, Signieren aller Skripte, `.intunewin`-Erzeugung
+- PSADT-4.1-Generator mit Standard-Bausteinen, Signieren aller Skripte, `.intunewin`-Erzeugung
 
 **DoD:** Für 10 Referenzprodukte (z. B. 7-Zip, Notepad++, VLC, Google Chrome Enterprise MSI,
 Adobe Acrobat Reader, Microsoft VC++ Redist, Git, VS Code, Zoom, eine interne MSI) entsteht aus dem
@@ -535,28 +603,30 @@ und in Intune Pilot veröffentlicht – ohne einen manuellen Schritt außer „F
 
 ## 10. Annahmen und offene Entscheidungen
 
-Getroffene Annahmen (im Plan umgesetzt, bei Bedarf ändern):
+Entschieden (Stand 2026-11-17):
 
-1. **Cloud-first auf Azure**, On-Prem-Betrieb als spätere Option (API/UI containerisiert, Worker als Windows-VM).
-2. **PSADT v4** als einziges Paketformat in v1; MSI/MSIX werden in PSADT gekapselt.
-3. **Intune** ist das primäre Verteilsystem; ConfigMgr später.
-4. **Teams** über Workflows-Webhooks (Office-365-Connectoren sind abgekündigt).
-5. Eigenes Repo `modernwork-appforge`, getrennt von ModernWork Elevate.
+1. **Zertifikate:** heute On-Prem-PKI (ADCS) → v1 `CertStoreProvider`; Cloud (Key Vault mit ADCS-CSR,
+   Artifact Signing) und externe CA als gleichwertige, umschaltbare Provider (Abschnitt 4.1).
+2. **Ein Tenant** zum Start; `TenantId` im Datenmodell vorbereitet.
+3. **Betrieb on-prem oder Azure umschaltbar**, Cloud-Integration in beiden Modi (Abschnitt 3.2a).
+4. **Freigabestufen 0–3** wie in Abschnitt 4.5 festgelegt.
+5. **PSADT 4.1** (wie im MEC Packager) als Paketformat in v1; MSI/MSIX werden in PSADT gekapselt.
+6. **Intune** ist das primäre Verteilsystem; **ConfigMgr** als zweites Ziel (Erfahrung aus dem MEC
+   Packager vorhanden) in Phase 6 optional.
+7. **Teams** über Workflows-Webhooks (Office-365-Connectoren sind abgekündigt).
+8. Code liegt vorerst im Ordner `appforge/` dieses Repos; späterer Umzug in ein eigenes Repo `modernwork-appforge` ist vorgesehen.
 
-Vom Auftraggeber zu klären:
+Noch offen (blockiert v1 nicht):
 
-- Welche Zertifikate existieren bereits (interne PKI, Key Vault, Artifact Signing)? Getrennte Zertifikate für Skripte, Pakete, Remediations?
-- Multi-Tenant (mehrere Kunden/Mandanten) nötig oder ein Tenant?
-- Muss die Plattform komplett on-prem/air-gapped laufen können?
-- Welche Approval-Stufen sind organisatorisch vorgegeben (z. B. Security-Freigabe für jedes Paket)?
 - Lizenz/Distribution: internes Tool oder Produkt für Kunden?
+- Name des Change-Boards und Vertretungsregeln für Stufe 3
 
 ---
 
 ## 11. Übergabe-Prompt für den Bau
 
 > Baue die Plattform „ModernWork AppForge" gemäß `docs/plans/app-control-packaging-platform.md`
-> in einem neuen Repository. Beginne mit Phase 0 und Phase 1. Halte dich an die Projektstruktur aus
+> im Ordner `appforge/`. Beginne mit Phase 0 und Phase 1. Halte dich an die Projektstruktur aus
 > Abschnitt 3.3 und die Technologieentscheidungen aus 3.2. Jede Phase endet erst, wenn ihre
 > Definition of Done nachweislich erfüllt ist (Tests + kurze Demo-Anleitung im README).
 > Offene Entscheidungen aus Abschnitt 10 nicht selbst festlegen, sondern als Konfiguration
