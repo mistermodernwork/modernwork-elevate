@@ -140,6 +140,31 @@ Abhängigkeit steckt hinter einer Schnittstelle mit zwei Implementierungen:
 - **Umzug** on-prem → Azure über Export/Import-Werkzeug (DB-Migration + Artefakte kopieren + Hash-Prüfung).
 - Mehrere Tenants: Datenmodell bekommt ab v1 eine `TenantId`-Spalte (Standardwert = einziger Tenant), damit Multi-Tenant später ohne Migration der Daten möglich ist.
 
+### 3.2b Standard-Bereitstellung: Reine Cloud (`Hosting:Mode = Azure`)
+
+**Reine Cloud ist der Standard** für die Bicep-Vorlagen und die Schnellstart-Anleitung. On-Prem und
+Hybrid bleiben per Konfiguration verfügbar, sind aber Zusatzvarianten.
+
+| Baustein | Reine-Cloud-Umsetzung |
+|---|---|
+| API + Web-UI | Azure Container Apps (Linux), Managed Identity, Entra-ID-Anmeldung |
+| Datenbank | Azure SQL (Serverless, Auto-Pause) |
+| Warteschlange | Azure Service Bus (Standard) |
+| Artefakte | Blob Storage, immutable (zeitbasierte Aufbewahrung) + Versionierung |
+| Secrets | Azure Key Vault (RBAC-Modus) |
+| Monitoring | Application Insights + Log Analytics; Audit-Export Richtung Sentinel |
+| **Build-Worker** | **Windows Server 2025 VM Scale Set**, Autoscale nach Länge der Service-Bus-Queue, **0 Instanzen im Leerlauf**; Image mit signtool, IntuneWinAppUtil, PowerShell 7, ConfigCI, PSADT-Cache (Azure Compute Gallery, per Image-Builder-Vorlage erzeugt). Container Apps unterstützen keine Windows-Container, deshalb VMSS |
+| **Testinstallation** | Standard: **frische Azure-VM pro Testlauf** aus Gallery-Image, wird danach gelöscht (sauberste Isolation). Option: Windows Sandbox im Worker, nur bei VM-Größen mit verschachtelter Virtualisierung (z. B. Dv5/Ev5) |
+| **Signing** | Standard: **Azure Artifact Signing, Private Trust** (kein Schlüssel zu verwalten; WDAC-Regeln auf Signing-CA + EKU, nicht auf das kurzlebige Blattzertifikat). Alternativ Key Vault (Premium/HSM) mit externer CA oder mit einmalig von der ADCS signiertem CSR |
+| Ablageziele | Blob, GitHub, Azure DevOps, Intune direkt; **Azure Files** (SMB mit Entra-Kerberos) als Ersatz für On-Prem-Shares |
+| ConfigMgr / On-Prem-Shares | nur mit optionalem **On-Prem-Relay-Agent** (Windows-Dienst, holt Aufträge ausgehend über HTTPS ab, kein eingehender Port) oder VPN/ExpressRoute |
+| Netzwerk | Private Endpoints für SQL, Storage, Key Vault, Service Bus; Worker in eigenem Subnetz, nur ausgehend (Hersteller-Downloads über NAT Gateway mit fester IP, falls Hersteller IP-Freigaben verlangen) |
+| Identitäten | Managed Identity für API und Worker; Graph-Berechtigungen per App-Rolle, `Mail.Send` per Application Access Policy auf ein Postfach begrenzt |
+
+Bicep (`appforge/infra/`): `main.bicep` mit Parameter `deploymentMode = 'cloud' | 'hybrid'`
+(Standard `cloud`), Modulen je Baustein und einer `README`-Schrittfolge: App-Registrierung → Bicep
+deployen → Artifact-Signing-Konto + Zertifikatsprofil → erstes Profil anlegen.
+
 ### 3.3 Projektstruktur (Vorschlag, eigenes Repo `modernwork-appforge`)
 
 ```
@@ -609,6 +634,7 @@ Entschieden (Stand 2026-11-17):
    Artifact Signing) und externe CA als gleichwertige, umschaltbare Provider (Abschnitt 4.1).
 2. **Ein Tenant** zum Start; `TenantId` im Datenmodell vorbereitet.
 3. **Betrieb on-prem oder Azure umschaltbar**, Cloud-Integration in beiden Modi (Abschnitt 3.2a).
+   **Standard ist reine Cloud** mit Artifact Signing (Private Trust) und Windows-VMSS-Workern (Abschnitt 3.2b).
 4. **Freigabestufen 0–3** wie in Abschnitt 4.5 festgelegt.
 5. **PSADT 4.1** (wie im MEC Packager) als Paketformat in v1; MSI/MSIX werden in PSADT gekapselt.
 6. **Intune** ist das primäre Verteilsystem; **ConfigMgr** als zweites Ziel (Erfahrung aus dem MEC
