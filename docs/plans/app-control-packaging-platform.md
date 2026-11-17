@@ -140,10 +140,35 @@ Abhängigkeit steckt hinter einer Schnittstelle mit zwei Implementierungen:
 - **Umzug** on-prem → Azure über Export/Import-Werkzeug (DB-Migration + Artefakte kopieren + Hash-Prüfung).
 - Mehrere Tenants: Datenmodell bekommt ab v1 eine `TenantId`-Spalte (Standardwert = einziger Tenant), damit Multi-Tenant später ohne Migration der Daten möglich ist.
 
-### 3.2b Standard-Bereitstellung: Reine Cloud (`Hosting:Mode = Azure`)
+### 3.2b Standard-Bereitstellung: Reine Cloud, serverlos (`Hosting:Mode = Azure`, `Worker:Mode = Serverless`)
 
-**Reine Cloud ist der Standard** für die Bicep-Vorlagen und die Schnellstart-Anleitung. On-Prem und
-Hybrid bleiben per Konfiguration verfügbar, sind aber Zusatzvarianten.
+**Reine Cloud ohne eigene VMs ist der Standard.** Keine VM, kein Image, kein Patchen. Kosten
+entstehen fast nur, wenn gebaut wird. On-Prem, Hybrid und der Windows-Worker (VMSS bzw.
+Windows-Dienst) bleiben per Konfiguration verfügbar – nötig nur, wenn ein Zertifikat in lokalem
+HSM/Zertifikatsspeicher liegen muss oder signierte WDAC-Policy-Binaries gebraucht werden.
+
+**Serverlose Verarbeitungskette (alles Linux-Container):**
+
+| Schritt | Umsetzung ohne Windows |
+|---|---|
+| Ausführung | **Azure Container Apps Jobs** (ereignisgesteuert per Service-Bus-Scaler, 0 Instanzen im Leerlauf), ein Job-Image `appforge-pipeline` |
+| Download/Hash/Herstellersignatur prüfen | .NET; Authenticode-Prüfung der Herstellerdatei per PE/MSI-Parser + Zertifikatskette (`System.Security.Cryptography.Pkcs`) |
+| Malware-Scan | **Microsoft Defender for Storage – Malware Scanning beim Upload**; Ergebnis (Blob-Index-Tag / Event Grid) wird abgewartet, bevor weitergearbeitet wird |
+| Installer-Analyse | MSI-Tabellen mit **msitools** (`msiinfo`), EXE-Typ über PE-Ressourcen/Signaturen der Installer-Frameworks, winget-Manifeste |
+| PSADT-Paket erzeugen | Template-Generator (reines Datei-/Textwerk), PSADT-4.1-Dateien aus gecachtem, hash-geprüftem Release |
+| **Signieren** | **jsign** (Java, im Job-Image) mit Storetype **TRUSTEDSIGNING** (Artifact Signing) bzw. **AZUREKEYVAULT**; signiert `.ps1/.psm1/.psd1/.ps1xml`, EXE/DLL, MSI, CAB, CAT, VBS/JS. Auth per Managed Identity. Verifikation danach mit jsign + eigener Prüfung |
+| `.intunewin` | .NET-Bibliothek **SvRooij.ContentPrep** (plattformunabhängig) statt IntuneWinAppUtil |
+| WDAC | Policy-**XML** direkt erzeugen (Schema `SiPolicy`), Upload als App-Control-for-Business-Richtlinie über Graph/Intune. Signierte Policy-Binaries nur mit optionalem Windows-Worker |
+| **Testinstallation** (einziger Windows-Schritt) | Standard: **GitHub Actions `windows-latest`** oder **Azure-DevOps-Microsoft-hosted/Managed-DevOps-Pools-Agent**, von der Plattform per API gestartet (`ITestEnvironment` → `GitHubRunnerTestEnvironment` / `AzureDevOpsTestEnvironment`); Paket per kurzlebiger SAS-URL, Ergebnis per signiertem Callback. Option: Azure Container Instances mit Windows-Container für einfache Installer. Option: kein automatischer Test, Bewertung im Test-Ring über Intune-Installationsstatus |
+| Veröffentlichung | Graph (Intune), GitHub, Azure DevOps, Blob, Azure Files (SMB-Ziel über REST/SDK) |
+
+**Ohne Bicep-Kenntnisse bereitstellen:** Bicep bleibt als interne Quelle, der Admin nutzt
+- einen **„Deploy to Azure“-Button** (aus Bicep generiertes ARM-Template mit Portal-Oberfläche `createUiDefinition.json`), oder
+- `azd up` (ein Befehl), oder
+- eine Portal-Schritt-für-Schritt-Anleitung im README.
+Nach dem Deployment führt ein **Einrichtungsassistent in der Web-UI** durch App-Registrierung, Artifact-Signing-Profil, Benachrichtigungen und erstes Profil.
+
+Übersicht der Azure-Dienste im Standard:
 
 | Baustein | Reine-Cloud-Umsetzung |
 |---|---|
@@ -153,17 +178,19 @@ Hybrid bleiben per Konfiguration verfügbar, sind aber Zusatzvarianten.
 | Artefakte | Blob Storage, immutable (zeitbasierte Aufbewahrung) + Versionierung |
 | Secrets | Azure Key Vault (RBAC-Modus) |
 | Monitoring | Application Insights + Log Analytics; Audit-Export Richtung Sentinel |
-| **Build-Worker** | **Windows Server 2025 VM Scale Set**, Autoscale nach Länge der Service-Bus-Queue, **0 Instanzen im Leerlauf**; Image mit signtool, IntuneWinAppUtil, PowerShell 7, ConfigCI, PSADT-Cache (Azure Compute Gallery, per Image-Builder-Vorlage erzeugt). Container Apps unterstützen keine Windows-Container, deshalb VMSS |
-| **Testinstallation** | Standard: **frische Azure-VM pro Testlauf** aus Gallery-Image, wird danach gelöscht (sauberste Isolation). Option: Windows Sandbox im Worker, nur bei VM-Größen mit verschachtelter Virtualisierung (z. B. Dv5/Ev5) |
-| **Signing** | Standard: **Azure Artifact Signing, Private Trust** (kein Schlüssel zu verwalten; WDAC-Regeln auf Signing-CA + EKU, nicht auf das kurzlebige Blattzertifikat). Alternativ Key Vault (Premium/HSM) mit externer CA oder mit einmalig von der ADCS signiertem CSR |
+| **Build-Worker** | **Container Apps Jobs (Linux)**, siehe oben. Optional (nicht Standard): Windows Server 2025 VMSS oder On-Prem-Windows-Dienst |
+| **Testinstallation** | **GitHub-/Azure-DevOps-gehostete Windows-Runner** (frisch pro Lauf, von Microsoft/GitHub betrieben); optional ACI-Windows-Container |
+| **Malware-Scan** | Defender for Storage (Malware Scanning on upload) |
+| **Signing** | Standard: **Azure Artifact Signing, Private Trust** über jsign (kein Schlüssel zu verwalten; WDAC-Regeln auf Signing-CA + EKU, nicht auf das kurzlebige Blattzertifikat). Alternativ Key Vault (Premium/HSM) mit externer CA oder mit einmalig von der ADCS signiertem CSR |
 | Ablageziele | Blob, GitHub, Azure DevOps, Intune direkt; **Azure Files** (SMB mit Entra-Kerberos) als Ersatz für On-Prem-Shares |
 | ConfigMgr / On-Prem-Shares | nur mit optionalem **On-Prem-Relay-Agent** (Windows-Dienst, holt Aufträge ausgehend über HTTPS ab, kein eingehender Port) oder VPN/ExpressRoute |
 | Netzwerk | Private Endpoints für SQL, Storage, Key Vault, Service Bus; Worker in eigenem Subnetz, nur ausgehend (Hersteller-Downloads über NAT Gateway mit fester IP, falls Hersteller IP-Freigaben verlangen) |
 | Identitäten | Managed Identity für API und Worker; Graph-Berechtigungen per App-Rolle, `Mail.Send` per Application Access Policy auf ein Postfach begrenzt |
 
-Bicep (`appforge/infra/`): `main.bicep` mit Parameter `deploymentMode = 'cloud' | 'hybrid'`
-(Standard `cloud`), Modulen je Baustein und einer `README`-Schrittfolge: App-Registrierung → Bicep
-deployen → Artifact-Signing-Konto + Zertifikatsprofil → erstes Profil anlegen.
+Bicep (`appforge/infra/`): `main.bicep` mit Parametern `deploymentMode = 'cloud' | 'hybrid'`
+(Standard `cloud`) und `workerMode = 'serverless' | 'windowsVmss'` (Standard `serverless`), Modulen
+je Baustein, daraus generiertes `azuredeploy.json` + `createUiDefinition.json` für den
+„Deploy to Azure“-Button, `azure.yaml` für `azd up`.
 
 ### 3.3 Projektstruktur (Vorschlag, eigenes Repo `modernwork-appforge`)
 
@@ -634,7 +661,9 @@ Entschieden (Stand 2026-11-17):
    Artifact Signing) und externe CA als gleichwertige, umschaltbare Provider (Abschnitt 4.1).
 2. **Ein Tenant** zum Start; `TenantId` im Datenmodell vorbereitet.
 3. **Betrieb on-prem oder Azure umschaltbar**, Cloud-Integration in beiden Modi (Abschnitt 3.2a).
-   **Standard ist reine Cloud** mit Artifact Signing (Private Trust) und Windows-VMSS-Workern (Abschnitt 3.2b).
+   **Standard ist reine Cloud, serverlos**: Container Apps Jobs (Linux) + jsign mit Artifact Signing
+   (Private Trust) + Defender for Storage; Testinstallation über gehostete GitHub-/Azure-DevOps-Windows-Runner;
+   Bereitstellung per „Deploy to Azure“-Button/`azd up` (Abschnitt 3.2b). Windows-Worker nur optional.
 4. **Freigabestufen 0–3** wie in Abschnitt 4.5 festgelegt.
 5. **PSADT 4.1** (wie im MEC Packager) als Paketformat in v1; MSI/MSIX werden in PSADT gekapselt.
 6. **Intune** ist das primäre Verteilsystem; **ConfigMgr** als zweites Ziel (Erfahrung aus dem MEC
