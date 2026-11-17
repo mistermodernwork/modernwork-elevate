@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    Build-Einstellungen für ModernWork AppForge.
+    Bewusst eigene Datei: die Einstellungen von ModernWork Elevate (Repo-Wurzel) gelten hier nicht,
+    weil MSBuild die Suche nach Directory.Build.props an der ersten gefundenen Datei beendet.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>8.0</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904;NU1900</WarningsNotAsErrors>
+    <!-- Kein Telemetrie-/Doku-Zwang; XML-Doku nur wo sinnvoll. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>mistermodernwork</Authors>
+    <Company>ModernWork AppForge</Company>
+    <Product>ModernWork AppForge</Product>
+    <Copyright>© $([System.DateTime]::UtcNow.Year) mistermodernwork. MIT License.</Copyright>
+  </PropertyGroup>
+
+</Project>

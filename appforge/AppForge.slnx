@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AppForge.Core/AppForge.Core.csproj" />
+    <Project Path="src/AppForge.Infrastructure/AppForge.Infrastructure.csproj" />
+    <Project Path="src/AppForge.Signing/AppForge.Signing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AppForge.Tests/AppForge.Tests.csproj" />
+  </Folder>
+</Solution>

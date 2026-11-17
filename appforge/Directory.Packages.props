@@ -1,0 +1,31 @@
+<Project>
+  <!-- Zentrale Paketversionen (Central Package Management). -->
+  <ItemGroup>
+    <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.21.0" />
+    <PackageVersion Include="Azure.Security.KeyVault.Certificates" Version="4.10.0" />
+    <PackageVersion Include="Azure.Security.KeyVault.Secrets" Version="4.12.0" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.30.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Authentication" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.15" />
+    <PackageVersion Include="Microsoft.FluentUI.AspNetCore.Components" Version="4.14.5" />
+    <PackageVersion Include="Microsoft.FluentUI.AspNetCore.Components.Icons" Version="4.14.5" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.15" />
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.2" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+</Project>
