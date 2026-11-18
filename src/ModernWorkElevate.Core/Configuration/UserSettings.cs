@@ -28,10 +28,9 @@ using ModernWorkElevate.Core.Auth;
 /// collapsed. Persisted so the user's preference survives an app restart.
 /// </param>
 /// <param name="AutomaticUpdatesEnabled">
-/// True to periodically check GitHub Releases for a newer build and offer to
-/// install it. Defaults to true. Old settings files written before this field
-/// existed deserialize to the constructor default (on), which is the intended
-/// behaviour.
+/// Legacy, read by nothing. Earlier versions wrote it as true by default — without asking —
+/// so it must never count as consent to contact GitHub; <see cref="UpdateCheckEnabled"/>
+/// replaced it. Kept so old files keep round-tripping.
 /// </param>
 /// <param name="VerifiedClientIds">
 /// The App Registration client ids a sign-in has actually succeeded with. An id is
@@ -99,6 +98,11 @@ using ModernWorkElevate.Core.Auth;
 /// sign-in mark all of them as verified. Self-hosted tenants keep using that set unchanged;
 /// older versions ignore this one. <c>null</c> until the first shared-hosted sign-in.
 /// </param>
+/// <param name="UpdateCheckEnabled">
+/// True when the user chose to have the app ask GitHub once a day for a newer version. Off
+/// until they turn it on: the check sends the device's IP address to GitHub. A machine
+/// policy overrides it (<see cref="ModernWorkElevateOptions.UpdateCheckByPolicy"/>).
+/// </param>
 public sealed record UserSettings(
     ThemePreference Theme,
     double DefaultDurationHours,
@@ -119,7 +123,8 @@ public sealed record UserSettings(
     List<string>? PinnedEligibilities = null,
     List<string>? RecentEligibilities = null,
     string? LastSeenVersion = null,
-    string[]? VerifiedSharedHostedRegistrations = null)
+    string[]? VerifiedSharedHostedRegistrations = null,
+    bool UpdateCheckEnabled = false)
 {
     /// <summary>Defaults applied when no settings file exists or the file is unreadable.</summary>
     public static UserSettings Default { get; } = new(

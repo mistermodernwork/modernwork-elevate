@@ -107,6 +107,19 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
     private static readonly TimeSpan DeactivationWatchdog = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DeactivationPollInterval = TimeSpan.FromSeconds(6);
 
+    // While a request waits for an approver, how often its status is checked: often
+    // enough that an approval shows while the admin is still talking to the approver.
+    // It only runs while something is waiting, and only for the accounts concerned.
+    private static readonly TimeSpan ApprovalPollInterval = TimeSpan.FromSeconds(15);
+
+    // A request filed moments ago can be missing from Graph's lists and lookup alike;
+    // until this has passed, "not found" means "not there yet", not "closed".
+    private static readonly TimeSpan ApprovalGracePeriod = TimeSpan.FromMinutes(2);
+
+    // After an approval, how long to wait before reading the active list again when the
+    // role has not shown up yet — the read side lags the approval by seconds.
+    private static readonly TimeSpan ApprovedRoleRecheckDelay = TimeSpan.FromSeconds(6);
+
     private readonly IAuthService _authService;
     private readonly IEligibilityAggregator _aggregator;
     private readonly IAccountScopedServices _accountServices;
@@ -122,6 +135,11 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _countdownTimer;
     private readonly DispatcherTimer _networkSettleTimer;
+    private readonly DispatcherTimer _approvalTimer;
+
+    // One reconcile at a time: the periodic refresh and the approval poll can overlap,
+    // and two of them deciding the same request would announce it twice.
+    private readonly SemaphoreSlim _approvalReconcile = new(1, 1);
 
     // Tenant display name is per-tenant, not per-account: multiple enrolled
     // accounts in the same tenant share one entry. Negative results are cached too.
@@ -203,6 +221,10 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
     [ObservableProperty]
     private int _eligibleCount;
 
+    /// <summary>Number of requests waiting for an approver; drives the section's visibility.</summary>
+    [ObservableProperty]
+    private int _pendingApprovalCount;
+
     /// <summary>
     /// True while the standalone expiry-alert window should be on screen — i.e. an
     /// active assignment is inside the warning window and hasn't been dismissed.
@@ -261,6 +283,8 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _countdownTimer.Tick += (_, _) => UpdateCountdowns();
+        _approvalTimer = new DispatcherTimer { Interval = ApprovalPollInterval };
+        _approvalTimer.Tick += async (_, _) => await PollPendingApprovalsAsync();
 
         // Reload as soon as the network comes back instead of waiting for the next tick:
         // after logon, wake-up or a VPN connect the first read usually ran into a network
@@ -341,6 +365,9 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
 
     /// <summary>Cross-tenant: active assignments across every enrolled account.</summary>
     public ObservableCollection<ActiveAssignmentItemViewModel> ActiveAssignments { get; } = [];
+
+    /// <summary>The user's own activation requests that are waiting for an approver.</summary>
+    public ObservableCollection<PendingApprovalItemViewModel> PendingApprovals { get; } = [];
 
     /// <summary>Eligibilities the user pinned, shown above the tenant groups.</summary>
     public ObservableCollection<EligibilityItemViewModel> PinnedItems { get; } = [];
@@ -715,17 +742,20 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
 
         IsBusy = true;
+        var approvedAwaitingRole = false;
         try
         {
             using var cts = new CancellationTokenSource(RefreshTimeout);
             var snapshot = Accounts.Select(a => a.Account).ToList();
 
-            // Both reads fan out across all enrolled accounts in parallel with
+            // All reads fan out across all enrolled accounts in parallel with
             // per-account timeouts — a slow or broken tenant cannot block the
-            // rest.
+            // rest. Pending approvals come along, so a request filed in the portal
+            // or before a restart shows up too.
             var activeTask = _aggregator.GetAggregatedActiveAssignmentsAsync(snapshot, cts.Token);
             var eligibilityTask = _aggregator.GetAggregatedEligibilitiesAsync(snapshot, cts.Token);
-            await Task.WhenAll(activeTask, eligibilityTask);
+            var pendingTask = _aggregator.GetAggregatedPendingApprovalsAsync(snapshot, cts.Token);
+            await Task.WhenAll(activeTask, eligibilityTask, pendingTask);
 
             HarvestSubscriptionNames(activeTask.Result, eligibilityTask.Result);
 
@@ -742,6 +772,11 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
             BuildEligibilityGroups(eligibilityTask.Result);
             MarkActiveEligibilities();
             ApplyFilter();
+
+            // After the active list: "is the role live now?" is part of judging a
+            // request that left the pending list.
+            var approvedRows = await ReconcilePendingApprovalsAsync(pendingTask.Result, cts.Token);
+            approvedAwaitingRole = approvedRows.Any(row => !IsActiveNow(row));
 
             var anyLoadError = _activeReadFailures.Count > 0
                 || eligibilityTask.Result.Values.Any(r => r.LoadError is not null);
@@ -762,7 +797,229 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         {
             IsBusy = false;
         }
+
+        if (approvedAwaitingRole)
+        {
+            await RecheckApprovedRoleAsync();
+        }
     }
+
+    /// <summary>
+    /// Checks every request still waiting for an approver, between the minute-long
+    /// refreshes. A decided request is announced and dropped; an approval reloads the
+    /// active list at once, so the role switches from "waiting" to "active" without
+    /// waiting for the next refresh.
+    /// </summary>
+    private async Task PollPendingApprovalsAsync()
+    {
+        // A running refresh reads and reconciles pending requests itself.
+        if (IsBusy || PendingApprovals.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            using var cts = new CancellationTokenSource(RefreshTimeout);
+            var enrolled = Accounts.Select(item => EnrollmentKey(item.Account)).ToHashSet(StringComparer.Ordinal);
+            var accounts = PendingApprovals
+                .Select(row => row.Account)
+                .Where(account => enrolled.Contains(EnrollmentKey(account)))
+                .Distinct()
+                .ToList();
+            var fetched = await _aggregator.GetAggregatedPendingApprovalsAsync(accounts, cts.Token);
+            if (IsBusy)
+            {
+                return;
+            }
+
+            var approvedRows = await ReconcilePendingApprovalsAsync(fetched, cts.Token);
+            if (approvedRows.Count == 0)
+            {
+                return;
+            }
+
+            // The approval is announced; now the role itself, as soon as PIM lists it.
+            await RefreshAsync();
+            if (approvedRows.Any(row => !IsActiveNow(row)))
+            {
+                await RecheckApprovedRoleAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Approval status check failed");
+        }
+    }
+
+    /// <summary>
+    /// Brings the outcome of every request that left the pending list onto the screen:
+    /// new requests appear, decided ones are announced and removed. Only an account whose
+    /// read succeeded can lose a row — a failed read is not a decision.
+    /// </summary>
+    /// <returns>The rows that were approved in this pass.</returns>
+    private async Task<List<PendingApprovalItemViewModel>> ReconcilePendingApprovalsAsync(
+        IReadOnlyDictionary<SignedInAccount, PendingApprovalFetchResult> fetched,
+        CancellationToken ct)
+    {
+        var approvedRows = new List<PendingApprovalItemViewModel>();
+        if (!await _approvalReconcile.WaitAsync(0, ct))
+        {
+            return approvedRows;
+        }
+
+        try
+        {
+            // Rows of an enrollment that has been removed go without a word.
+            var enrolled = Accounts.Select(item => EnrollmentKey(item.Account)).ToHashSet(StringComparer.Ordinal);
+            foreach (var orphan in PendingApprovals.Where(row => !enrolled.Contains(EnrollmentKey(row.Account))).ToList())
+            {
+                PendingApprovals.Remove(orphan);
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var (account, result) in fetched)
+            {
+                if (result.LoadError is not null)
+                {
+                    continue;
+                }
+
+                var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var request in result.Items)
+                {
+                    listed.Add(request.RequestId);
+                    TrackPendingApproval(request, account, now);
+                }
+
+                var closed = PendingApprovals
+                    .Where(row => EnrollmentKey(row.Account) == EnrollmentKey(account)
+                        && !listed.Contains(row.Request.RequestId)
+                        && result.WasRead(row.Request.Kind))
+                    .ToList();
+                foreach (var row in closed)
+                {
+                    var outcome = await JudgeClosedRequestAsync(row, now, ct);
+                    if (outcome == ApprovalOutcome.StillPending)
+                    {
+                        continue;
+                    }
+
+                    PendingApprovals.Remove(row);
+                    _logger.LogInformation(
+                        "Approval request {RequestId} ({Kind}) in tenant {TenantId} closed: {Outcome}",
+                        row.Request.RequestId,
+                        row.Request.Kind,
+                        account.TenantId,
+                        outcome);
+                    _toastService.ShowApprovalOutcome(ApprovalToastLabel(row), outcome);
+
+                    if (outcome == ApprovalOutcome.Approved)
+                    {
+                        approvedRows.Add(row);
+                    }
+                }
+            }
+
+            UpdatePendingApprovalCount();
+            return approvedRows;
+        }
+        finally
+        {
+            _approvalReconcile.Release();
+        }
+    }
+
+    private async Task<ApprovalOutcome> JudgeClosedRequestAsync(PendingApprovalItemViewModel row, DateTimeOffset now, CancellationToken ct)
+    {
+        var status = await _aggregator.GetRequestStatusAsync(row.Account, row.Request.Kind, row.Request.RequestId, ct);
+        return ApprovalOutcomeClassifier.Classify(
+            status,
+            isActiveNow: IsActiveNow(row),
+            isWithinGracePeriod: now - row.TrackedSince < ApprovalGracePeriod);
+    }
+
+    /// <summary>Adds a waiting request, or refreshes the row with the service's fuller data.</summary>
+    private void TrackPendingApproval(PendingApprovalRequest request, SignedInAccount account, DateTimeOffset now)
+    {
+        var index = -1;
+        for (var i = 0; i < PendingApprovals.Count; i++)
+        {
+            var existing = PendingApprovals[i];
+            if (EnrollmentKey(existing.Account) == EnrollmentKey(account)
+                && string.Equals(existing.Request.RequestId, request.RequestId, StringComparison.OrdinalIgnoreCase))
+            {
+                index = i;
+                break;
+            }
+        }
+
+        // Unchanged: leave the row alone, so a 15-second poll does not rebuild the list.
+        if (index >= 0 && PendingApprovals[index].Request == request)
+        {
+            return;
+        }
+
+        var trackedSince = index >= 0 ? PendingApprovals[index].TrackedSince : now;
+        _tenantNameCache.TryGetValue(account.TenantId, out var tenantName);
+        var row = new PendingApprovalItemViewModel(request, account, trackedSince)
+        {
+            TenantName = tenantName,
+            AccountAlias = AliasFor(account),
+            ScopeSubscriptionName = SubscriptionNameFor(request.ScopeId),
+        };
+
+        if (index >= 0)
+        {
+            PendingApprovals[index] = row;
+        }
+        else
+        {
+            PendingApprovals.Add(row);
+        }
+
+        UpdatePendingApprovalCount();
+    }
+
+    /// <summary>Whether the role behind <paramref name="row"/> is in the active list (a real row, not a placeholder).</summary>
+    private bool IsActiveNow(PendingApprovalItemViewModel row)
+    {
+        var key = PendingMatchKey(row.Account, row.Request.Kind, row.Request.ResourceId, row.Request.ScopeId);
+        return ActiveAssignments.Any(active => !active.IsPending
+            && PendingMatchKey(active.Account, active.Assignment.Kind, active.Assignment.ResourceId, active.Assignment.ScopeId).Equals(key));
+    }
+
+    /// <summary>
+    /// One more read of the active list a few seconds after an approval whose role had
+    /// not appeared yet — the approval is announced; the row should follow promptly.
+    /// </summary>
+    private async Task RecheckApprovedRoleAsync()
+    {
+        await Task.Delay(ApprovedRoleRecheckDelay);
+        await RefreshAsync();
+    }
+
+    private void UpdatePendingApprovalCount()
+    {
+        PendingApprovalCount = PendingApprovals.Count;
+        if (PendingApprovalCount > 0 && IsSignedIn)
+        {
+            if (!_approvalTimer.IsEnabled)
+            {
+                _approvalTimer.Start();
+            }
+        }
+        else
+        {
+            _approvalTimer.Stop();
+        }
+    }
+
+    /// <summary>"Contributor · lz-prod" for an Azure role, the bare name otherwise.</summary>
+    private string ApprovalToastLabel(PendingApprovalItemViewModel row)
+        => row.Request.Kind == PimResourceKind.AzureResourceRole
+            ? $"{row.DisplayName} · {ScopeNameFormatter.Describe(row.Request.ScopeId, row.Request.ScopeLabel, SubscriptionNameFor(row.Request.ScopeId))}"
+            : row.DisplayName;
 
     /// <summary>Opens the "Add account" slide-in for <paramref name="slot"/> (broker
     /// sign-in primary, device code under Advanced). Closes Settings first: the slide-in
@@ -1530,6 +1787,28 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         if (outcomes.FirstOrDefault(outcome => outcome.Result.IsSuccess) is { } granted)
         {
             RememberRecent(granted.Account, granted.Request.Eligibility);
+        }
+
+        // A request that went to an approver is listed at once, from what was sent — the
+        // service's own copy replaces it on the next read, and the approval watch starts.
+        var requestedAt = DateTimeOffset.UtcNow;
+        foreach (var outcome in outcomes.Where(candidate => candidate.Result.IsSuccess
+            && candidate.Result.Status == ActivationStatus.PendingApproval
+            && !string.IsNullOrEmpty(candidate.Result.RequestId)))
+        {
+            var target = outcome.Target;
+            TrackPendingApproval(
+                new PendingApprovalRequest(
+                    target.Kind,
+                    target.DisplayName,
+                    target.ResourceId,
+                    target.ScopeId,
+                    outcome.Result.RequestId,
+                    requestedAt,
+                    outcome.Request.Duration,
+                    target.ScopeLabel),
+                outcome.Account,
+                requestedAt);
         }
 
         // Per scope, not per batch: a narrowed activation carries one reason across

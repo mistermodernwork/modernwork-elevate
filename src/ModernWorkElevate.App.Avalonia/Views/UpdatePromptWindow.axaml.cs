@@ -7,10 +7,9 @@ using Avalonia.Markup.Xaml;
 using ModernWorkElevate.AppAvalonia.Services;
 
 /// <summary>
-/// Standalone, always-on-top window that offers an available update and tracks
-/// the download / ready / error stages. Created once and shown / hidden by
-/// <see cref="Tray.UpdateController"/>. The buttons surface as plain events so
-/// the controller (which owns the the installer flow) decides what they do.
+/// Standalone, always-on-top window that says a newer version is on GitHub. Created once
+/// and shown / hidden by <see cref="Tray.UpdateController"/>; the buttons surface as plain
+/// events so the controller decides what they do.
 /// </summary>
 public partial class UpdatePromptWindow : Window
 {
@@ -20,13 +19,10 @@ public partial class UpdatePromptWindow : Window
         WindowChrome.Attach(this);
     }
 
-    /// <summary>Raised when the user clicks "Install" — start the background download.</summary>
-    public event EventHandler? InstallRequested;
+    /// <summary>Raised when the user clicks "Open release page".</summary>
+    public event EventHandler? OpenReleasePageRequested;
 
-    /// <summary>Raised when the user clicks "Restart now" — apply + relaunch.</summary>
-    public event EventHandler? RestartRequested;
-
-    /// <summary>Raised when the user clicks "Later" / "Dismiss" — defer or stage for next launch.</summary>
+    /// <summary>Raised when the user clicks "Later".</summary>
     public event EventHandler? LaterRequested;
 
     private void InitializeComponent()
@@ -34,11 +30,8 @@ public partial class UpdatePromptWindow : Window
         AvaloniaXamlLoader.Load(this);
     }
 
-    private void OnInstallClick(object? sender, RoutedEventArgs e)
-        => InstallRequested?.Invoke(this, EventArgs.Empty);
-
-    private void OnRestartClick(object? sender, RoutedEventArgs e)
-        => RestartRequested?.Invoke(this, EventArgs.Empty);
+    private void OnOpenReleasePageClick(object? sender, RoutedEventArgs e)
+        => OpenReleasePageRequested?.Invoke(this, EventArgs.Empty);
 
     private void OnLaterClick(object? sender, RoutedEventArgs e)
         => LaterRequested?.Invoke(this, EventArgs.Empty);

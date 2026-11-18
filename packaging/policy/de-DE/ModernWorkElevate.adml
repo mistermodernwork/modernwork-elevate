@@ -9,6 +9,7 @@
   <resources>
     <stringTable>
       <string id="SUPPORTED_ModernWorkElevate_1_2">ModernWork Elevate 1.2 oder neuer unter Windows 11 25H2 oder neuer</string>
+      <string id="SUPPORTED_ModernWorkElevate_1_4">ModernWork Elevate 1.4 oder neuer unter Windows 11 25H2 oder neuer</string>
       <string id="Cat_ModernWorkElevate">ModernWork Elevate</string>
 
       <string id="Tenants">Vorkonfigurierte Tenants und App-Registrierungen</string>
@@ -30,6 +31,15 @@ Deaktiviert oder nicht konfiguriert: Benutzer konfigurieren ihre Tenants selbst.
       <string id="LockTenants_Help">Aktiviert: Nur die Tenants aus "Vorkonfigurierte Tenants und App-Registrierungen" stehen zur Verfügung. Vom Benutzer konfigurierte Tenants werden ignoriert; Benutzer können keine Tenants hinzufügen, ändern oder entfernen.
 
 Deaktiviert oder nicht konfiguriert: Benutzer können zusätzlich zu den vorkonfigurierten Tenants eigene hinzufügen.</string>
+
+      <string id="UpdateCheck">Bei GitHub nach neuen Versionen suchen</string>
+      <string id="UpdateCheck_Help">Legt fest, ob ModernWork Elevate bei GitHub (api.github.com) nach der neuesten Version fragt. Die App prüft nur: Gibt es eine neuere Version, erscheint ein Hinweis, dessen Schaltfläche die Release-Seite öffnet. Sie lädt nie etwas herunter und installiert nichts. Die Anfrage enthält keine Benutzer-, Geräte- oder Tenant-Daten — GitHub sieht die IP-Adresse des Geräts und die App-Version.
+
+Aktiviert: Die App prüft einmal täglich; Benutzer können das nicht abschalten.
+Deaktiviert: Die App kontaktiert GitHub nie, die Schaltfläche "Check for updates" ist ausgeblendet.
+Nicht konfiguriert: Jeder Benutzer entscheidet in den Einstellungen; die Prüfung ist aus, bis er sie einschaltet.
+
+Empfohlen für verwaltete Geräte, die Updates über Intune oder Configuration Manager erhalten: Deaktiviert.</string>
 
 
     </stringTable>

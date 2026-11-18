@@ -4,21 +4,19 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ModernWorkElevate.AppAvalonia.Services;
 using ModernWorkElevate.AppAvalonia.ViewModels;
 using ModernWorkElevate.AppAvalonia.Views;
 using ModernWorkElevate.Core.Configuration;
 using ModernWorkElevate.Core.Services;
+using ModernWorkElevate.Core.Updates;
 
 /// <summary>
-/// Owns the single re-usable update-prompt window and the periodic update check.
-/// Polls GitHub Releases (an initial check shortly after launch, then once a
-/// day), and when a newer version is found shows an always-on-top prompt
-/// anchored bottom-right above the tray. On accept it downloads in the
-/// background and offers "Restart now" or applies on the next launch. The
-/// polling half is gated by <see cref="UserSettings.AutomaticUpdatesEnabled"/>
-/// (live-read each tick); <see cref="CheckNowAsync"/> — the Settings button — is
-/// not. Either way, nothing runs outside a real the installer install.
+/// The update check: shortly after launch and then once a day it asks GitHub for the latest
+/// release — only when the machine policy or the user turned the check on — and shows a
+/// small always-on-top window <b>only when a newer version exists</b>. Its button opens the
+/// release page; nothing is downloaded or run. The Settings button checks on demand.
 /// </summary>
 public sealed class UpdateController
 {
@@ -26,7 +24,7 @@ public sealed class UpdateController
 
     // Logical-height estimate used to anchor the window before its first layout
     // pass populates the real Bounds; corrected immediately afterwards.
-    private const double EstimatedHeight = 170;
+    private const double EstimatedHeight = 150;
 
     private static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PollInterval = TimeSpan.FromHours(24);
@@ -35,10 +33,12 @@ public sealed class UpdateController
     private readonly UpdatePromptViewModel _viewModel;
     private readonly IUpdateService _updateService;
     private readonly IUserSettingsService _settings;
+    private readonly ModernWorkElevateOptions _options;
     private readonly ILogger<UpdateController> _logger;
     private readonly DispatcherTimer _timer;
 
-    // Versions the user dismissed this session — don't nag again until restart.
+    // Versions the user dismissed this session — the daily check does not nag again
+    // until restart; a deliberate "Check now" still shows them.
     private readonly HashSet<string> _dismissedVersions = new(StringComparer.Ordinal);
 
     private UpdateCheckResult? _pending;
@@ -50,14 +50,17 @@ public sealed class UpdateController
         UpdatePromptViewModel viewModel,
         IUpdateService updateService,
         IUserSettingsService settings,
+        IOptions<ModernWorkElevateOptions> options,
         SettingsPanelViewModel settingsPanel,
         ILogger<UpdateController> logger)
     {
         ArgumentNullException.ThrowIfNull(settingsPanel);
+        ArgumentNullException.ThrowIfNull(options);
         _window = window;
         _viewModel = viewModel;
         _updateService = updateService;
         _settings = settings;
+        _options = options.Value;
         _logger = logger;
         _window.DataContext = _viewModel;
 
@@ -73,13 +76,11 @@ public sealed class UpdateController
             _window.Hide();
         };
 
-        _window.InstallRequested += OnInstallRequested;
-        _window.RestartRequested += OnRestartRequested;
+        _window.OpenReleasePageRequested += OnOpenReleasePageRequested;
         _window.LaterRequested += OnLaterRequested;
 
-        // The Settings "Check for updates" button routes here (the VM has no
-        // direct controller dependency — it just raises this event and renders
-        // whatever outcome comes back).
+        // The Settings "Check for updates" button routes here (the VM has no direct
+        // controller dependency — it raises this event and renders the outcome).
         settingsPanel.CheckForUpdatesRequested += CheckNowAsync;
 
         _timer = new DispatcherTimer { Interval = InitialDelay };
@@ -90,40 +91,27 @@ public sealed class UpdateController
     public void PrepareForShutdown() => _allowClose = true;
 
     /// <summary>
-    /// Starts the periodic check. No-ops (no timer, no window) when the app is
-    /// not a the installer install, so dev / cross-build runs are unaffected.
+    /// Starts the daily timer. Each tick re-reads policy and setting, so turning the check
+    /// on or off takes effect without a restart; while it is off, a tick makes no request.
     /// </summary>
-    public void Start()
-    {
-        if (!_updateService.IsSupported)
-        {
-            _logger.LogDebug("Auto-update disabled — not running from a the installer install");
-            return;
-        }
-
-        _timer.Start();
-    }
+    public void Start() => _timer.Start();
 
     /// <summary>
-    /// Runs a check immediately and reports what it found. Backs the Settings
-    /// "Check for updates" button.
+    /// Runs a check now and reports what it found — the Settings button. A press is the
+    /// user's consent for this one check, so the switch does not gate it; only a policy
+    /// that forbids contacting GitHub does.
     /// </summary>
-    /// <remarks>
-    /// Deliberately ignores both brakes the background poll obeys. The
-    /// <see cref="UserSettings.AutomaticUpdatesEnabled"/> switch governs
-    /// unprompted checking, not the user's ability to ask; and a version
-    /// dismissed earlier this session was dismissed against a popup nobody
-    /// asked for, so a deliberate press must still be able to see it.
-    /// </remarks>
-    public Task<UpdateCheckOutcome> CheckNowAsync() => CheckAsync(manual: true);
+    public Task<UpdateCheckOutcome> CheckNowAsync()
+        => UpdateCheckRules.IsManualCheckAllowed(_options.UpdateCheckByPolicy)
+            ? CheckAsync(manual: true)
+            : Task.FromResult(UpdateCheckOutcome.DisabledByPolicy);
 
     private async void OnTimerTick(object? sender, EventArgs e)
     {
-        // The first tick fires after InitialDelay; from then on poll daily.
+        // The first tick fires after InitialDelay; from then on daily.
         _timer.Interval = PollInterval;
 
-        // Live-read so toggling the setting takes effect without a restart.
-        if (_busy || !_settings.Current.AutomaticUpdatesEnabled)
+        if (_busy || !UpdateCheckRules.IsAutomaticCheckEnabled(_options.UpdateCheckByPolicy, _settings.Current.UpdateCheckEnabled))
         {
             return;
         }
@@ -133,38 +121,20 @@ public sealed class UpdateController
 
     private async Task<UpdateCheckOutcome> CheckAsync(bool manual)
     {
-        // A download in flight, or one already finished and waiting for the restart,
-        // owns the prompt. Running the check through would reset it to Available with
-        // Progress 0 — discarding a finished download and offering the same version a
-        // second time. The honest answer to "is there an update" is the prompt that
-        // already exists: a deliberate press brings its window back, the daily poll
-        // leaves a window the user hid alone.
-        if (_pending is not null
-            && _viewModel.Stage is UpdatePromptViewModel.UpdateStage.Downloading
-                or UpdatePromptViewModel.UpdateStage.Ready)
-        {
-            if (manual)
-            {
-                Show();
-            }
-
-            return UpdateCheckOutcome.UpdateAvailable;
-        }
-
         _busy = true;
         try
         {
             var (outcome, update) = await _updateService.CheckAsync().ConfigureAwait(true);
+
+            // Like Rufus: nothing to show unless there is something newer.
             if (update is null || (!manual && _dismissedVersions.Contains(update.Version)))
             {
                 return outcome;
             }
 
             _pending = update;
-            _viewModel.Stage = UpdatePromptViewModel.UpdateStage.Available;
             _viewModel.NewVersion = update.Version;
-            _viewModel.CurrentVersion = _updateService.CurrentVersion ?? string.Empty;
-            _viewModel.Progress = 0;
+            _viewModel.CurrentVersion = _updateService.CurrentVersion;
             Show();
             return outcome;
         }
@@ -174,37 +144,17 @@ public sealed class UpdateController
         }
     }
 
-    private async void OnInstallRequested(object? sender, EventArgs e)
-    {
-        if (_pending is not { } update)
-        {
-            return;
-        }
-
-        _viewModel.Progress = 0;
-        _viewModel.Stage = UpdatePromptViewModel.UpdateStage.Downloading;
-        try
-        {
-            await _updateService
-                .DownloadAsync(update, p => Dispatcher.UIThread.Post(() => _viewModel.Progress = p))
-                .ConfigureAwait(true);
-            _viewModel.Stage = UpdatePromptViewModel.UpdateStage.Ready;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Update download failed");
-            _viewModel.ErrorText = "The update could not be downloaded. Please try again later.";
-            _viewModel.Stage = UpdatePromptViewModel.UpdateStage.Error;
-        }
-    }
-
-    private void OnRestartRequested(object? sender, EventArgs e)
+    private void OnOpenReleasePageRequested(object? sender, EventArgs e)
     {
         if (_pending is { } update)
         {
-            // Exits and relaunches into the new version.
-            _updateService.ApplyAndRestart(update);
+            // Only this project's release page gets here (GitHubReleaseParser checks it),
+            // and Browser.Open accepts absolute https URLs only.
+            Browser.Open(update.ReleasePageUrl, "release page", _logger);
+            _dismissedVersions.Add(update.Version);
         }
+
+        Hide();
     }
 
     private void OnLaterRequested(object? sender, EventArgs e)
@@ -212,13 +162,6 @@ public sealed class UpdateController
         if (_pending is { } update)
         {
             _dismissedVersions.Add(update.Version);
-
-            // Already downloaded? Stage it so the next launch is the new version
-            // without a second download.
-            if (_viewModel.Stage == UpdatePromptViewModel.UpdateStage.Ready)
-            {
-                _updateService.ApplyOnNextLaunch(update);
-            }
         }
 
         Hide();

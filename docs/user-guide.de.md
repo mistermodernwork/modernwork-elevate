@@ -125,7 +125,7 @@ Dann **Activate**. Die Rolle wandert innerhalb weniger Sekunden nach ACTIVE.
 ### Hinweise, die man lesen sollte
 
 **ℹ This activation requires approval** — du bekommst die Rolle jetzt nicht. Die Anfrage geht an
-einen Genehmiger und wartet. Die Zeile bleibt als ausstehend sichtbar, und die Rolle wird aktiv,
+einen Genehmiger und wartet unter **WAITING FOR APPROVAL** (siehe unten), und die Rolle wird aktiv,
 sobald zugestimmt wurde. Von deiner Seite ist nichts weiter zu tun — dränge den Genehmiger, nicht
 die App.
 
@@ -142,6 +142,28 @@ Einstellungen der Rolle nicht lesen und zeigt keinen der beiden Hinweise.
 **⚠ This group can carry directory roles** — bei einem PIM-for-Groups-Eintrag. Eine
 Gruppenmitgliedschaft kann Admin-Rollen mitbringen; die Aktivierung gibt dir also womöglich mehr,
 als der Gruppenname vermuten lässt. Gut zu wissen, was man da einschaltet.
+
+### Warten auf Genehmigung
+
+Jede deiner Anfragen, über die noch kein Genehmiger entschieden hat, steht unter **WAITING FOR
+APPROVAL**, oberhalb von ACTIVE — mit Benutzer, Tenant und Scope, dazu wann und für wie lange du
+angefragt hast („Requested 14:32 · 2h“). Die Liste kommt von Microsoft, die App merkt sich nichts
+davon: Sie ist nach einem Neustart noch da, und auch eine Anfrage aus dem Entra- oder Azure-Portal
+taucht auf.
+
+Solange etwas wartet, prüft die App alle 15 Sekunden nach. Sobald entschieden ist, kommt eine
+Benachrichtigung, und die Liste ändert sich mit:
+
+| Benachrichtigung | Was passiert ist |
+| --- | --- |
+| **Approved** — „… was approved and is now active.“ | Die Zeile verschwindet aus WAITING FOR APPROVAL, die Rolle erscheint unter ACTIVE mit Countdown. |
+| **Request denied** | Ein Genehmiger hat abgelehnt. Nichts ist aktiv. |
+| **Request expired** | Kein Genehmiger hat rechtzeitig reagiert. Frag neu an, wenn du die Rolle noch brauchst. |
+| **Request canceled** | Die Anfrage wurde zurückgezogen — von dir im Portal oder von einem Administrator. |
+
+Die Benachrichtigung sagt nicht, *wer* genehmigt hat: Die App liest nur den Status der Anfrage, und
+dafür reicht die Berechtigung, die sie ohnehin hat. Den Namen nennt die Genehmigungs-E-Mail von
+Microsoft.
 
 ## Azure-Rollen: wo die Rolle gelten soll
 
@@ -258,9 +280,15 @@ aus der Richtlinie deiner Organisation lassen sich hier nicht ändern.
 
 ## Updates
 
-Die App aktualisiert sich nicht selbst und verbindet sich nie mit GitHub. Neue Versionen kommen
-über die Softwareverteilung deiner Organisation; Einstellungen, Konten und Favoriten bleiben bei
-jedem Update erhalten.
+Die App aktualisiert sich nicht selbst. Neue Versionen kommen meist über die Softwareverteilung
+deiner Organisation; Einstellungen, Konten und Favoriten bleiben bei jedem Update erhalten.
+
+Wenn du wissen willst, wann es eine neue Version gibt, schalte **Settings → Updates → Check for new
+versions** ein. Die App fragt dann einmal täglich bei GitHub nach der neuesten Version und zeigt ein
+kleines Fenster in der Ecke — **nur wenn es eine neuere gibt**. **Open release page** öffnet die
+Download-Seite im Browser; zum Installieren des MSI brauchst du Administratorrechte. **Check for
+updates** fragt einmal, sofort. Die Prüfung ist aus, bis du sie einschaltest, weil GitHub deine
+IP-Adresse sieht; ist der Schalter ausgegraut, hat deine Organisation entschieden.
 
 ## Wenn etwas nicht funktioniert
 

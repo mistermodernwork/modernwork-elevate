@@ -29,4 +29,10 @@ public enum ActivationStatus
 
     /// <summary>Was active and has since ended.</summary>
     Revoked,
+
+    /// <summary>The request was withdrawn before it was decided.</summary>
+    Canceled,
+
+    /// <summary>No approver decided before the request timed out.</summary>
+    TimedOut,
 }

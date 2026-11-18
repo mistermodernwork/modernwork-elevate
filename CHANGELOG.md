@@ -3,8 +3,25 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
-## Unreleased
+## 1.4.0
 
+- **Optional check for new versions.** Settings → Updates → *Check for new versions* (off by
+  default) asks GitHub once a day for the latest release and shows a notice only when a newer
+  version exists; its button opens the release page. Nothing is downloaded or installed. New
+  machine policy `UpdateCheck` (ADMX *Check GitHub for new versions*): 1 = on, 0 = never contact
+  GitHub. The earlier `AutomaticUpdatesEnabled` setting — written as true without asking — no
+  longer counts as consent. The unused download/restart flow of the update window is removed.
+  `PRIVACY.md` names GitHub as the one optional destination.
+- **Installer detects .NET 10.** The MSI's runtime check never found an installed runtime — WiX put
+  the search depth on the directory row, not the file row, so `System.Private.CoreLib.dll` was never
+  looked for in the version folder — and every install needed `SKIPRUNTIMECHECK=1`. The check now
+  reads the version of `dotnet.exe`; the property is only needed when the runtime comes later.
+- **Waiting for approval.** Your own activation requests that an approver has not decided yet are
+  listed above ACTIVE — for directory roles, PIM for Groups and Azure resource roles, read from
+  Microsoft, so they survive a restart and include requests made in the portal. While something
+  waits, the app checks every 15 seconds; an approval, denial, expiry or cancellation raises a
+  notification, and an approved role switches to ACTIVE at once. No new permission: the app reads
+  the request status only, so the notification does not name the approver.
 - Release builds can be signed with Azure Artifact Signing: the release workflow signs in with
   GitHub OIDC (environment `release`) instead of importing a `.pfx` secret, which new publicly
   trusted certificates no longer allow. `build.ps1` / `sign.ps1` gain `-ArtifactSigningMetadata` and

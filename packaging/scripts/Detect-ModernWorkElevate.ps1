@@ -15,7 +15,7 @@
     Alternativ ohne Skript: MSI-Produktcode (Intune "MSI"-Erkennung) oder
     Registry HKLM\SOFTWARE\ModernWorkElevate, Wert Version, Versionsvergleich >= Release.
 #>
-$RequiredVersion = [version]'1.3.6'
+$RequiredVersion = [version]'1.4.0'
 
 try {
     $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
