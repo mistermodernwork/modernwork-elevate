@@ -129,8 +129,10 @@ jobs:
             Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
           if (-not (Test-Path $dlib) -or -not $signtool) { throw 'Artifact Signing dlib or signtool not found in the packages.' }
 
-          # Values come from the environment, never from ${{ }} interpolation. Only the Azure CLI
-          # credential from azure/login is tried, so no other identity on the runner can sign.
+          # Values come from the environment, never from expression interpolation in the script
+          # (GitHub evaluates expressions even in comments inside run blocks — an empty one made
+          # the whole workflow invalid in 1.4.0). Only the Azure CLI credential from azure/login
+          # is tried, so no other identity on the runner can sign.
           $metadata = Join-Path $tools 'metadata.json'
           [ordered]@{
             Endpoint               = $env:ARTIFACT_SIGNING_ENDPOINT
