@@ -76,6 +76,12 @@ Alternativ ohne ADMX: Plattformskript oder Remediation mit dem Inhalt von
 | --- | --- | --- |
 | Vorkonfigurierte Tenants und App-Registrierungen | `Tenants\<Tenant-ID>` = `ClientId[;Bezeichnung[;Cloud]]` | keine |
 | Tenant-Liste sperren | `LockTenants` = 1 | aus |
+| Bei GitHub nach neuen Versionen suchen (ab 1.4) | `UpdateCheck` = 1 täglich / 0 nie | Benutzer entscheidet, aus |
+
+`UpdateCheck` *prüft* nur (`api.github.com`) und zeigt einen Hinweis mit Link zur Release-Seite – die
+App lädt nie etwas herunter und installiert nichts. Mit `0` kontaktiert die App GitHub nie, und die
+Schaltfläche "Check for updates" ist ausgeblendet; empfohlen, wenn ihr Versionen über Intune oder
+Configuration Manager verteilt.
 
 Änderungen wirken beim nächsten Start der App. Ungültige Tenant-Einträge werden übersprungen und im
 Log (`%LOCALAPPDATA%\ModernWorkElevate\logs`) vermerkt – ein Tippfehler legt die App nicht lahm.

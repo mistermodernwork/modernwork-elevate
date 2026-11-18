@@ -244,8 +244,15 @@ organization's policy cannot be changed here.
 
 ## Updates
 
-The app does not update itself and never contacts GitHub. New versions arrive through your
-organization's software rollout; your settings, accounts and favourites survive every update.
+The app does not update itself. New versions usually arrive through your organization's software
+rollout; your settings, accounts and favourites survive every update.
+
+If you want to know when there is a new version, turn on **Settings → Updates → Check for new
+versions**. Once a day the app then asks GitHub for the latest release and shows a small window in
+the corner — **only when a newer version exists**. **Open release page** opens the download page in
+your browser; installing the MSI needs administrator rights. **Check for updates** asks once, right
+now. The check is off until you turn it on, because GitHub sees your IP address; if the switch is
+greyed out, your organization decided for you.
 
 ## When something does not work
 

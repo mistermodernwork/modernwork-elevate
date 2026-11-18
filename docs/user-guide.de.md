@@ -258,9 +258,15 @@ aus der Richtlinie deiner Organisation lassen sich hier nicht ändern.
 
 ## Updates
 
-Die App aktualisiert sich nicht selbst und verbindet sich nie mit GitHub. Neue Versionen kommen
-über die Softwareverteilung deiner Organisation; Einstellungen, Konten und Favoriten bleiben bei
-jedem Update erhalten.
+Die App aktualisiert sich nicht selbst. Neue Versionen kommen meist über die Softwareverteilung
+deiner Organisation; Einstellungen, Konten und Favoriten bleiben bei jedem Update erhalten.
+
+Wenn du wissen willst, wann es eine neue Version gibt, schalte **Settings → Updates → Check for new
+versions** ein. Die App fragt dann einmal täglich bei GitHub nach der neuesten Version und zeigt ein
+kleines Fenster in der Ecke — **nur wenn es eine neuere gibt**. **Open release page** öffnet die
+Download-Seite im Browser; zum Installieren des MSI brauchst du Administratorrechte. **Check for
+updates** fragt einmal, sofort. Die Prüfung ist aus, bis du sie einschaltest, weil GitHub deine
+IP-Adresse sieht; ist der Schalter ausgegraut, hat deine Organisation entschieden.
 
 ## Wenn etwas nicht funktioniert
 

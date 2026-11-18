@@ -126,8 +126,13 @@ device. The app reads HKLM only; a user cannot change or weaken them.
 | --- | --- | --- |
 | Pre-configured tenants and App Registrations | `Tenants\<tenant-id>` (REG_SZ) = `ClientId[;Label[;Cloud]]` | none |
 | Lock the tenant list | `LockTenants` (DWORD) = `1` | off |
+| Check GitHub for new versions (1.4+) | `UpdateCheck` (DWORD) = `1` daily / `0` never | user decides, off |
 
 - A policy entry replaces a user's entry for the same tenant.
+- `UpdateCheck` only *checks* (`api.github.com`) and shows a notice with a link to the release page —
+  the app never downloads or installs. With `0` the app never contacts GitHub and the "Check for
+  updates" button is hidden; recommended when you roll versions out through Intune or
+  Configuration Manager.
 - With `LockTenants`, only policy tenants exist; users cannot add, change or remove tenants.
 - Invalid entries are skipped and logged — a typo never stops the app.
 - Changes apply at the next app start.

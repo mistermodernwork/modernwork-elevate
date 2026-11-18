@@ -40,8 +40,9 @@ manage. When the time is up, the role ends on its own.
 - **For:** IT and identity admins with PIM-eligible roles, on managed Windows 11 devices.
 - **Covers:** Entra ID directory roles, PIM for Groups and PIM for Azure resources — one list,
   many tenants and accounts.
-- **Never:** asks for a password, stores tokens on disk, runs a server or sends data anywhere but
-  Microsoft. No telemetry.
+- **Never:** asks for a password, stores tokens on disk, runs a server or updates itself. No
+  telemetry; data goes only to Microsoft — and to GitHub only if you turn on the optional check for
+  new versions.
 
 ![Seven steps per tenant in the Entra admin center, three clicks for every tenant with ModernWork Elevate](docs/images/why.svg)
 
@@ -127,7 +128,7 @@ This is a privileged-access tool. The design choices are not preferences:
 | Installation | Per machine in Program Files — read-only for users, fit for WDAC/AppLocker publisher and path rules. |
 | User data | `%APPDATA%\ModernWorkElevate` with a user + SYSTEM-only ACL; no secrets inside. |
 | Configuration | Machine policy in HKLM beats every per-user setting. |
-| Network | Microsoft Entra, Microsoft Graph and Azure Resource Manager only — no telemetry, no update server, no third party. |
+| Network | Microsoft Entra, Microsoft Graph and Azure Resource Manager — no telemetry. GitHub only if the optional version check is turned on (off by default, lockable by policy); it never downloads or installs anything. |
 | Logs | No tokens, no justification text, no UPNs. |
 | Supply chain | NuGet audit on; vulnerable transitive packages pinned to patched versions; build signs with your certificate. |
 
