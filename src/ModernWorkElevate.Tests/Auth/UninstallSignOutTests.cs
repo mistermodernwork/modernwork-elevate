@@ -17,7 +17,7 @@ public sealed class UninstallSignOutTests
             Account("oid-b", "tenant-2", AuthMethod.DeviceCode, EntraCloud.Global),
             Account("oid-c", "tenant-3", AuthMethod.Broker, EntraCloud.China));
 
-        await UninstallSignOut.SignOutBrokerAccountsAsync(auth.Object);
+        await UninstallSignOut.SignOutBrokerAccountsAsync(auth.Object, TestContext.Current.CancellationToken);
 
         auth.Verify(a => a.RemoveAccountAsync("oid-a", "tenant-1", EntraCloud.Global, It.IsAny<CancellationToken>()), Times.Once());
         auth.Verify(a => a.RemoveAccountAsync("oid-c", "tenant-3", EntraCloud.China, It.IsAny<CancellationToken>()), Times.Once());
@@ -37,7 +37,7 @@ public sealed class UninstallSignOutTests
         auth.Setup(a => a.RemoveAccountAsync("oid-a", "tenant-1", EntraCloud.Global, It.IsAny<CancellationToken>()))
             .ThrowsAsync((Exception)Activator.CreateInstance(failure)!);
 
-        await UninstallSignOut.SignOutBrokerAccountsAsync(auth.Object);
+        await UninstallSignOut.SignOutBrokerAccountsAsync(auth.Object, TestContext.Current.CancellationToken);
 
         auth.Verify(a => a.RemoveAccountAsync("oid-b", "tenant-2", EntraCloud.Global, It.IsAny<CancellationToken>()), Times.Once());
     }

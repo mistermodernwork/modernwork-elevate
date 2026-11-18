@@ -106,7 +106,7 @@ try {
 
     if (-not $SkipTests) {
         Write-Host '== Tests' -ForegroundColor Cyan
-        Invoke-Dotnet test $testProject -c $Configuration --no-build
+        Invoke-Dotnet test --project $testProject -c $Configuration --no-build
     }
 
     Write-Host '== Publish (framework-dependent, RollForward=LatestMajor)' -ForegroundColor Cyan
