@@ -19,11 +19,22 @@
 .PARAMETER CertificateThumbprint
     SHA1-Fingerabdruck des Code-Signing-Zertifikats (CurrentUser\My oder LocalMachine\My,
     auch HSM/Token-Zertifikate mit CSP/KSP).
+
+.PARAMETER ArtifactSigningMetadata
+    Statt eines Zertifikats: metadata.json für Azure Artifact Signing (Endpoint, CodeSigningAccountName,
+    CertificateProfileName). Der private Schlüssel verlässt den Dienst nie; signtool lädt dafür das
+    Plugin aus -ArtifactSigningDlib. Ohne signtool gibt es in diesem Modus keinen Ersatzweg.
+
+.PARAMETER ArtifactSigningDlib
+    Pfad zu Azure.CodeSigning.Dlib.dll (NuGet-Paket Microsoft.ArtifactSigning.Client, bin\x64 für
+    x64-signtool). signtool muss mindestens aus dem Windows SDK 10.0.22621.755 stammen.
 #>
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'Certificate')]
 param(
     [Parameter(Mandatory)] [string[]] $Files,
-    [Parameter(Mandatory)] [string] $CertificateThumbprint,
+    [Parameter(Mandatory, ParameterSetName = 'Certificate')] [string] $CertificateThumbprint,
+    [Parameter(Mandatory, ParameterSetName = 'ArtifactSigning')] [string] $ArtifactSigningMetadata,
+    [Parameter(Mandatory, ParameterSetName = 'ArtifactSigning')] [string] $ArtifactSigningDlib,
     [string] $TimestampUrl = 'http://timestamp.digicert.com',
     [string] $SignToolPath
 )
@@ -64,6 +75,23 @@ function Get-SigningCertificate {
 }
 
 $signtool = Find-SignTool
+
+if ($PSCmdlet.ParameterSetName -eq 'ArtifactSigning') {
+    if (-not $signtool) { throw 'Artifact Signing braucht signtool.exe (Windows SDK >= 10.0.22621.755 oder NuGet Microsoft.Windows.SDK.BuildTools).' }
+    foreach ($path in $ArtifactSigningMetadata, $ArtifactSigningDlib) {
+        if (-not (Test-Path -LiteralPath $path)) { throw "Nicht gefunden: $path" }
+    }
+    if (-not $TimestampUrl) { throw 'Artifact Signing braucht einen Zeitstempel: die Zertifikate gelten nur 72 Stunden.' }
+
+    Write-Host "Signiere $($Files.Count) Datei(en) über Azure Artifact Signing mit $signtool"
+    & $signtool sign /fd SHA256 /tr $TimestampUrl /td SHA256 /d 'ModernWork Elevate' /dlib $ArtifactSigningDlib /dmdf $ArtifactSigningMetadata @Files
+    if ($LASTEXITCODE -ne 0) { throw 'Signatur fehlgeschlagen (signtool / Artifact Signing).' }
+
+    & $signtool verify /pa /q @Files
+    if ($LASTEXITCODE -ne 0) { throw 'Signaturprüfung fehlgeschlagen (signtool).' }
+    return
+}
+
 if ($signtool) {
     # Ein Aufruf für alle Dateien: ein Zeitstempel-Durchlauf statt einer Verbindung pro Datei.
     Write-Host "Signiere $($Files.Count) Datei(en) mit $signtool"

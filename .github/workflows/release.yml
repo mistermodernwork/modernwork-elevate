@@ -8,11 +8,16 @@ name: Release
 # or run it manually (Actions → Release → Run workflow) to get the MSIs as a
 # workflow artifact without creating a release.
 #
-# Signing (optional): add two repository secrets
-#   SIGNING_CERT_PFX_BASE64   the code-signing certificate as base64-encoded .pfx
-#   SIGNING_CERT_PASSWORD     its password
+# Signing (optional) with Azure Artifact Signing — no certificate file, no long-lived secret:
+# the job signs in to Azure with GitHub OIDC (federated credential on an Entra app, subject
+# repo:<owner>/<repo>:environment:release) and the key never leaves the service. Set these
+# secrets on the GitHub environment "release":
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID   the Entra app used for signing
+#   ARTIFACT_SIGNING_ENDPOINT   e.g. https://weu.codesigning.azure.net
+#   ARTIFACT_SIGNING_ACCOUNT    Artifact Signing account name
+#   ARTIFACT_SIGNING_PROFILE    certificate profile name (Public Trust)
 # Without them the MSIs are built unsigned (SmartScreen will warn; WDAC/AppLocker
-# environments need signed builds — see docs/code-signing-wdac.md).
+# environments need signed builds). Setup: docs/code-signing-wdac.md.
 
 on:
   push:
@@ -21,10 +26,20 @@ on:
 
 permissions:
   contents: write
+  # Only for the OIDC sign-in to Azure Artifact Signing; nothing else in the job uses it.
+  id-token: write
+
+env:
+  # Pinned and verified (NuGet repository + author signature) before use.
+  ARTIFACT_SIGNING_CLIENT_VERSION: '1.0.151'
+  WINDOWS_SDK_BUILDTOOLS_VERSION: '10.0.28000.2957'
 
 jobs:
   build:
     runs-on: windows-latest
+    # The federated credential trusts this environment only; protect it with required reviewers
+    # to put a human in front of every signed release.
+    environment: release
 
     steps:
       - name: Checkout
@@ -49,45 +64,121 @@ jobs:
           if ($version -ne $tag) { throw "Tag v$tag does not match <Version>$version</Version> in Directory.Build.props." }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Import signing certificate
-        id: cert
+      - name: Check signing configuration
+        id: signing
         shell: pwsh
         env:
-          PFX_BASE64: ${{ secrets.SIGNING_CERT_PFX_BASE64 }}
-          PFX_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ secrets.ARTIFACT_SIGNING_PROFILE }}
         run: |
-          if ([string]::IsNullOrEmpty($env:PFX_BASE64)) {
-            Write-Host 'No signing certificate configured - building unsigned.'
-            "thumbprint=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            exit 0
+          $missing = 'AZURE_CLIENT_ID', 'ARTIFACT_SIGNING_ENDPOINT', 'ARTIFACT_SIGNING_ACCOUNT', 'ARTIFACT_SIGNING_PROFILE' |
+            Where-Object { [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_)) }
+          if ($missing) {
+            Write-Host "Artifact Signing not configured ($($missing -join ', ') missing) - building unsigned."
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
-          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
-          $secure = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
-          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
-          Remove-Item $pfx -Force
-          "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Sign in to Azure (OIDC)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # The GitHub OIDC assertion behind azure/login is valid only for minutes, but signing starts
+      # after build and tests. Fetching the Artifact Signing token now puts it in the Azure CLI
+      # cache, where the signtool plugin's AzureCliCredential finds it later.
+      - name: Fetch Artifact Signing token
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          az account get-access-token --scope https://codesigning.azure.net/.default --output none
+          if ($LASTEXITCODE -ne 0) { throw 'Could not get a token for Artifact Signing.' }
+
+      - name: Prepare Artifact Signing
+        if: steps.signing.outputs.enabled == 'true'
+        id: tools
+        shell: pwsh
+        env:
+          ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT }}
+          ARTIFACT_SIGNING_PROFILE: ${{ secrets.ARTIFACT_SIGNING_PROFILE }}
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'signing-tools'
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+          $packages = @{
+            'microsoft.artifactsigning.client' = $env:ARTIFACT_SIGNING_CLIENT_VERSION
+            'microsoft.windows.sdk.buildtools' = $env:WINDOWS_SDK_BUILDTOOLS_VERSION
+          }
+          foreach ($id in $packages.Keys) {
+            $version = $packages[$id]
+            $nupkg = Join-Path $tools "$id.$version.nupkg"
+            Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/$id/$version/$id.$version.nupkg" -OutFile $nupkg
+            # Repository and author signature: a tampered package never reaches signtool.
+            dotnet nuget verify $nupkg --all
+            if ($LASTEXITCODE -ne 0) { throw "Signature check failed for $id $version." }
+            Expand-Archive $nupkg -DestinationPath (Join-Path $tools $id) -Force
+          }
+          $dlib = Join-Path $tools 'microsoft.artifactsigning.client\bin\x64\Azure.CodeSigning.Dlib.dll'
+          $signtool = Get-ChildItem (Join-Path $tools 'microsoft.windows.sdk.buildtools\bin') -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+          if (-not (Test-Path $dlib) -or -not $signtool) { throw 'Artifact Signing dlib or signtool not found in the packages.' }
+
+          # Values come from the environment, never from ${{ }} interpolation. Only the Azure CLI
+          # credential from azure/login is tried, so no other identity on the runner can sign.
+          $metadata = Join-Path $tools 'metadata.json'
+          [ordered]@{
+            Endpoint               = $env:ARTIFACT_SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:ARTIFACT_SIGNING_ACCOUNT
+            CertificateProfileName = $env:ARTIFACT_SIGNING_PROFILE
+            CorrelationId          = "$env:GITHUB_REPOSITORY run $env:GITHUB_RUN_ID"
+            ExcludeCredentials     = @(
+              'EnvironmentCredential', 'ManagedIdentityCredential', 'WorkloadIdentityCredential',
+              'SharedTokenCacheCredential', 'VisualStudioCredential', 'VisualStudioCodeCredential',
+              'AzurePowerShellCredential', 'AzureDeveloperCliCredential', 'InteractiveBrowserCredential')
+          } | ConvertTo-Json | Set-Content $metadata -Encoding utf8
+
+          "dlib=$dlib" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "signtool=$($signtool.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "metadata=$metadata" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Build x64 (tests, publish, sign, MSI)
         shell: pwsh
+        env:
+          SIGN_DLIB: ${{ steps.tools.outputs.dlib }}
+          SIGN_TOOL: ${{ steps.tools.outputs.signtool }}
+          SIGN_METADATA: ${{ steps.tools.outputs.metadata }}
         run: |
           # Hashtable, not array: splatting an array into a script binds '-Runtime' as a
           # positional value (Configuration) instead of a parameter name.
           $buildArgs = @{ Runtime = 'win-x64' }
-          if ('${{ steps.cert.outputs.thumbprint }}') {
-            $buildArgs.CertificateThumbprint = '${{ steps.cert.outputs.thumbprint }}'
+          if ($env:SIGN_METADATA) {
+            $buildArgs.ArtifactSigningMetadata = $env:SIGN_METADATA
+            $buildArgs.ArtifactSigningDlib = $env:SIGN_DLIB
+            $buildArgs.SignToolPath = $env:SIGN_TOOL
             $buildArgs.SignUnsignedDependencies = $true
           }
           ./build/build.ps1 @buildArgs
 
       - name: Build ARM64
         shell: pwsh
+        env:
+          SIGN_DLIB: ${{ steps.tools.outputs.dlib }}
+          SIGN_TOOL: ${{ steps.tools.outputs.signtool }}
+          SIGN_METADATA: ${{ steps.tools.outputs.metadata }}
         run: |
           # Hashtable, not array: splatting an array into a script binds '-Runtime' as a
           # positional value (Configuration) instead of a parameter name.
           $buildArgs = @{ Runtime = 'win-arm64'; SkipTests = $true }
-          if ('${{ steps.cert.outputs.thumbprint }}') {
-            $buildArgs.CertificateThumbprint = '${{ steps.cert.outputs.thumbprint }}'
+          if ($env:SIGN_METADATA) {
+            $buildArgs.ArtifactSigningMetadata = $env:SIGN_METADATA
+            $buildArgs.ArtifactSigningDlib = $env:SIGN_DLIB
+            $buildArgs.SignToolPath = $env:SIGN_TOOL
             $buildArgs.SignUnsignedDependencies = $true
           }
           ./build/build.ps1 @buildArgs
@@ -125,10 +216,7 @@ jobs:
           files: artifacts/release/*
           fail_on_unmatched_files: true
 
-      - name: Remove signing certificate
-        if: always()
+      - name: Sign out of Azure
+        if: always() && steps.signing.outputs.enabled == 'true'
         shell: pwsh
-        run: |
-          if ('${{ steps.cert.outputs.thumbprint }}') {
-            Remove-Item "Cert:\CurrentUser\My\${{ steps.cert.outputs.thumbprint }}" -ErrorAction SilentlyContinue
-          }
+        run: az logout

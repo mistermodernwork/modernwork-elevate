@@ -5,6 +5,11 @@ entry also ships inside the app as its "what's new" text (`packaging/release-not
 
 ## Unreleased
 
+- Release builds can be signed with Azure Artifact Signing: the release workflow signs in with
+  GitHub OIDC (environment `release`) instead of importing a `.pfx` secret, which new publicly
+  trusted certificates no longer allow. `build.ps1` / `sign.ps1` gain `-ArtifactSigningMetadata` and
+  `-ArtifactSigningDlib`; certificate signing with `-CertificateThumbprint` is unchanged. Without
+  configuration, releases stay unsigned. Setup: `docs/code-signing-wdac.md`.
 - Dependencies: Microsoft.Extensions.* 10.0.15 (.NET 10 servicing), Microsoft.Graph 5.105.0 (pulls
   Microsoft.IdentityModel 8.x instead of the deprecated 7.6), System.Drawing.Common 4.7.3,
   Serilog.Sinks.Console 6.1.1; test tooling updated.
