@@ -126,8 +126,13 @@ device. The app reads HKLM only; a user cannot change or weaken them.
 | --- | --- | --- |
 | Pre-configured tenants and App Registrations | `Tenants\<tenant-id>` (REG_SZ) = `ClientId[;Label[;Cloud]]` | none |
 | Lock the tenant list | `LockTenants` (DWORD) = `1` | off |
+| Check GitHub for new versions (1.4+) | `UpdateCheck` (DWORD) = `1` daily / `0` never | user decides, off |
 
 - A policy entry replaces a user's entry for the same tenant.
+- `UpdateCheck` only *checks* (`api.github.com`) and shows a notice with a link to the release page —
+  the app never downloads or installs. With `0` the app never contacts GitHub and the "Check for
+  updates" button is hidden; recommended when you roll versions out through Intune or
+  Configuration Manager.
 - With `LockTenants`, only policy tenants exist; users cannot add, change or remove tenants.
 - Invalid entries are skipped and logged — a typo never stops the app.
 - Changes apply at the next app start.
@@ -253,6 +258,7 @@ No service, no scheduled task, no tokens or passwords on disk.
 | --- | --- |
 | MSI: "requires Windows 11 version 25H2" | Device below build 26200. |
 | MSI: "requires the .NET Runtime 10" | Deploy the runtime first or set `SKIPRUNTIMECHECK=1` with a dependency. |
+| Browser or Windows blocks the downloaded MSI (SmartScreen) | The release MSI is not code-signed yet and has little download reputation. Check it against `SHA256SUMS.txt` (`Get-FileHash`), then Edge **…** → **Keep** → **Show more** → **Keep anyway**, or `Unblock-File` it. Software distribution (Intune, Configuration Manager) does not go through SmartScreen. Lasting fix: sign the MSI (section 3, or signed releases via [Azure Artifact Signing](code-signing-wdac.md#signed-releases-on-github-azure-artifact-signing)). |
 | App exits immediately, exit code `3` | Windows below build 26200. |
 | Consent dialog at sign-in | A requested Graph permission is not admin-consented in that tenant — compare the list in section 2 with *Enterprise applications → (app) → Permissions*. A broader permission (e.g. `RoleManagement.ReadWrite.Directory`) does not satisfy a request for a narrower one. |
 | "Couldn't load eligibilities for this tenant" | See the log (`%LOCALAPPDATA%\ModernWorkElevate\logs`); the first line shows the running version. |

@@ -164,9 +164,9 @@ public partial class App : Application
 
         SyncAutostartMenuCheck(this, Services);
 
-        // Start the auto-updater after settings are loaded so its first check
-        // reads the real AutomaticUpdatesEnabled value. No-ops when not running
-        // from a the installer install.
+        // Start the update check after settings are loaded so its first tick reads the
+        // user's real choice. It contacts GitHub only when the policy or the user turned
+        // it on, and it never downloads anything.
         _updateController = Services.GetRequiredService<UpdateController>();
         _updateController.Start();
 

@@ -12,8 +12,8 @@ using ModernWorkElevate.Core.Auth;
 /// <remarks>
 /// Device-code sign-in and a token cache on disk are not configurable at all —
 /// both are permanently off (<see cref="ModernWorkElevateOptions.DeviceCodeAllowed"/>,
-/// <see cref="ModernWorkElevateOptions.PersistentTokenCacheAllowed"/>). The policy only carries
-/// the tenant list and its lock; any other value under the key is ignored.
+/// <see cref="ModernWorkElevateOptions.PersistentTokenCacheAllowed"/>). The policy carries
+/// the tenant list, its lock and the update check; any other value under the key is ignored.
 /// </remarks>
 public sealed record MachinePolicy
 {
@@ -26,6 +26,12 @@ public sealed record MachinePolicy
     /// <summary>DWORD: 1 = only the tenants from the policy; the user cannot add or edit tenants.</summary>
     public const string LockTenantsValue = "LockTenants";
 
+    /// <summary>
+    /// DWORD: 1 = check GitHub daily for a newer version, 0 = never contact GitHub; absent =
+    /// the user's choice (off by default).
+    /// </summary>
+    public const string UpdateCheckValue = "UpdateCheck";
+
     /// <summary>The policy in effect when no policy key exists: the hardened defaults.</summary>
     public static MachinePolicy None { get; } = new();
 
@@ -34,6 +40,12 @@ public sealed record MachinePolicy
 
     /// <summary>When true, <see cref="Tenants"/> is the complete tenant list.</summary>
     public bool LockTenants { get; init; }
+
+    /// <summary>
+    /// The update check as the organization fixed it: <c>true</c> forced on, <c>false</c>
+    /// forced off, <c>null</c> when the policy leaves it to the user.
+    /// </summary>
+    public bool? UpdateCheck { get; init; }
 
     /// <summary>
     /// Builds the policy from raw registry data. Never throws: a malformed entry is skipped
@@ -74,6 +86,7 @@ public sealed record MachinePolicy
         {
             Tenants = parsed,
             LockTenants = IsOn(flags, LockTenantsValue),
+            UpdateCheck = TriState(flags, UpdateCheckValue),
         };
     }
 
@@ -111,6 +124,17 @@ public sealed record MachinePolicy
             Label = label,
         };
     }
+
+    /// <summary>1 → on, 0 → off; missing or unreadable → <c>null</c> (no decision).</summary>
+    private static bool? TriState(IReadOnlyDictionary<string, object?> flags, string name)
+        => flags.TryGetValue(name, out var value) ? value switch
+        {
+            int i when i is 0 or 1 => i == 1,
+            long l when l is 0 or 1 => l == 1,
+            string s when s.Trim() is "0" or "1" => s.Trim() == "1",
+            _ => null,
+        }
+        : null;
 
     private static bool IsOn(IReadOnlyDictionary<string, object?> flags, string name)
         => flags.TryGetValue(name, out var value) && value switch

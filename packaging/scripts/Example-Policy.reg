@@ -8,3 +8,8 @@ Windows Registry Editor Version 5.00
 
 [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate\Tenants]
 "00000000-0000-0000-0000-000000000001"="00000000-0000-0000-0000-0000000000aa;Contoso;Global"
+
+; Versionspruefung bei GitHub: 0 = nie (empfohlen bei Verteilung ueber Intune/ConfigMgr), 1 = taeglich.
+; Ohne den Wert entscheidet der Benutzer (aus, bis er sie einschaltet).
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate]
+"UpdateCheck"=dword:00000000

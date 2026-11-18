@@ -26,6 +26,15 @@ msiexec /i ModernWorkElevate-<Version>-x64.msi /qn /norestart /l*v "%TEMP%\Moder
 Installiert wird nach `C:\Program Files\ModernWork Elevate` mit Startmenü-Verknüpfung für alle Benutzer.
 Laufende Instanzen werden bei Upgrade und Deinstallation beendet.
 
+**Download von SmartScreen blockiert?** Das Release-MSI ist noch nicht code-signiert und hat wenig
+Download-Reputation. Zuerst gegen `SHA256SUMS.txt` aus demselben Release prüfen (`Get-FileHash`), dann
+in Edge unter Downloads **…** → **Behalten** → **Mehr anzeigen** → **Trotzdem behalten**; meldet
+Windows „Der Computer wurde durch Windows geschützt“, **Weitere Informationen** → **Trotzdem
+ausführen**. Alternativ die Download-Markierung mit `Unblock-File` entfernen. Über Intune oder
+Configuration Manager verteilt, läuft das MSI nicht durch SmartScreen. Dauerhafte Lösung: signieren
+(eigenes Zertifikat oder signierte Releases über
+[Azure Artifact Signing](code-signing-wdac.de.md#signierte-releases-auf-github-azure-artifact-signing)).
+
 **Upgrade:** das neuere MSI genauso installieren (Major Upgrade). Benutzereinstellungen und Anmeldungen bleiben.
 **Downgrade** wird verhindert.
 
@@ -76,6 +85,12 @@ Alternativ ohne ADMX: Plattformskript oder Remediation mit dem Inhalt von
 | --- | --- | --- |
 | Vorkonfigurierte Tenants und App-Registrierungen | `Tenants\<Tenant-ID>` = `ClientId[;Bezeichnung[;Cloud]]` | keine |
 | Tenant-Liste sperren | `LockTenants` = 1 | aus |
+| Bei GitHub nach neuen Versionen suchen (ab 1.4) | `UpdateCheck` = 1 täglich / 0 nie | Benutzer entscheidet, aus |
+
+`UpdateCheck` *prüft* nur (`api.github.com`) und zeigt einen Hinweis mit Link zur Release-Seite – die
+App lädt nie etwas herunter und installiert nichts. Mit `0` kontaktiert die App GitHub nie, und die
+Schaltfläche "Check for updates" ist ausgeblendet; empfohlen, wenn ihr Versionen über Intune oder
+Configuration Manager verteilt.
 
 Änderungen wirken beim nächsten Start der App. Ungültige Tenant-Einträge werden übersprungen und im
 Log (`%LOCALAPPDATA%\ModernWorkElevate\logs`) vermerkt – ein Tippfehler legt die App nicht lahm.

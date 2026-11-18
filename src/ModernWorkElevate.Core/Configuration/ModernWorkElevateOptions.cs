@@ -74,6 +74,13 @@ public sealed class ModernWorkElevateOptions
     public bool TenantsLockedByPolicy { get; private set; }
 
     /// <summary>
+    /// The update check as the machine policy fixed it (<c>true</c>/<c>false</c>), or
+    /// <c>null</c> when the user decides. Private setter for the same reason as
+    /// <see cref="TenantsLockedByPolicy"/>: no JSON layer may claim the policy's authority.
+    /// </summary>
+    public bool? UpdateCheckByPolicy { get; private set; }
+
+    /// <summary>
     /// Reads <c>ModernWorkElevate:SharedHostedClientId</c> from the shipped
     /// <c>appsettings.json</c> at <paramref name="appSettingsPath"/>, or <c>null</c> when the
     /// file or the key is missing or unreadable. Never throws: a broken value must not stop
@@ -116,6 +123,7 @@ public sealed class ModernWorkElevateOptions
         ArgumentNullException.ThrowIfNull(policy);
 
         TenantsLockedByPolicy = policy.LockTenants;
+        UpdateCheckByPolicy = policy.UpdateCheck;
 
         var policyEntries = policy.Tenants.Select(Copy).ToList();
         if (policy.LockTenants)

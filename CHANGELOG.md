@@ -5,6 +5,13 @@ entry also ships inside the app as its "what's new" text (`packaging/release-not
 
 ## 1.4.0
 
+- **Optional check for new versions.** Settings → Updates → *Check for new versions* (off by
+  default) asks GitHub once a day for the latest release and shows a notice only when a newer
+  version exists; its button opens the release page. Nothing is downloaded or installed. New
+  machine policy `UpdateCheck` (ADMX *Check GitHub for new versions*): 1 = on, 0 = never contact
+  GitHub. The earlier `AutomaticUpdatesEnabled` setting — written as true without asking — no
+  longer counts as consent. The unused download/restart flow of the update window is removed.
+  `PRIVACY.md` names GitHub as the one optional destination.
 - **Installer detects .NET 10.** The MSI's runtime check never found an installed runtime — WiX put
   the search depth on the directory row, not the file row, so `System.Private.CoreLib.dll` was never
   looked for in the version folder — and every install needed `SKIPRUNTIMECHECK=1`. The check now
