@@ -276,7 +276,7 @@ public sealed class PimGroupService : IPimGroupService
             error.Error?.Code,
             error.ResponseStatusCode,
             error.Error?.InnerError?.RequestId,
-            error.Error?.Message);
+            LogRedaction.Redact(error.Error?.Message));
 
         return new(
             RequestId: string.Empty,

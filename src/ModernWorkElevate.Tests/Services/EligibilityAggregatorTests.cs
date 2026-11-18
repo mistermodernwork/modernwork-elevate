@@ -1,13 +1,16 @@
 namespace ModernWorkElevate.Tests.Services;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Graph.Models.ODataErrors;
 using Microsoft.Identity.Client;
 using ModernWorkElevate.Core.Arm;
 using ModernWorkElevate.Core.Auth;
 using ModernWorkElevate.Core.Configuration;
 using ModernWorkElevate.Core.Models;
 using ModernWorkElevate.Core.Services;
+using ModernWorkElevate.Tests.TestSupport;
 using Moq;
 
 public sealed class EligibilityAggregatorTests
@@ -222,6 +225,52 @@ public sealed class EligibilityAggregatorTests
         Assert.Equal(2, result[account].Items.Count);
         Assert.DoesNotContain(result[account].Items, e => e.Kind == PimResourceKind.AzureResourceRole);
         Assert.StartsWith("Azure resource roles unavailable", result[account].LoadError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetAggregatedEligibilitiesAsync_ArmFailureNamingTheUser_IsLoggedWithoutTheUpn()
+    {
+        // The fetch failure is logged with its exception; the exception text is ARM's
+        // message, which names the caller by UPN.
+        var account = MakeAccount("oid-a", "tenant-a");
+        var azure = new Mock<IPimAzureResourceService>();
+        azure
+            .Setup(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ArmRequestException(403, "AuthorizationFailed", "The client 'alice@contoso.com' with object id 'oid-a' does not have authorization."));
+        var logger = new CapturingLogger<EligibilityAggregator>();
+        var aggregator = BuildAggregator(account, azure.Object, logger: logger);
+
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(logger.Entries);
+        Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AuthorizationFailed", logger.AllText, StringComparison.Ordinal);
+        Assert.Contains("oid-a", logger.AllText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetAggregatedEligibilitiesAsync_GraphFailureNamingTheUser_IsLoggedWithoutTheUpn()
+    {
+        var account = MakeAccount("oid-a", "tenant-a");
+        var role = new Mock<IPimRoleService>();
+        role
+            .Setup(s => s.GetEligibleRolesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ODataError
+            {
+                ResponseStatusCode = 403,
+                Error = new MainError { Code = "Authorization_RequestDenied", Message = "Insufficient privileges for user 'alice@contoso.com'." },
+            });
+        var bundle = new AccountScopedServiceBundle(role.Object, EmptyGroupService(), EmptyAzureService(), Mock.Of<IPolicyService>());
+        var scoped = new Mock<IAccountScopedServices>();
+        scoped.Setup(s => s.GetServicesFor(account)).Returns(bundle);
+        var logger = new CapturingLogger<EligibilityAggregator>();
+        var aggregator = new EligibilityAggregator(scoped.Object, NoOptions, logger);
+
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(logger.Entries);
+        Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("oid-a", logger.AllText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -460,7 +509,8 @@ public sealed class EligibilityAggregatorTests
     private static EligibilityAggregator BuildAggregator(
         SignedInAccount account,
         IPimAzureResourceService azure,
-        IOptions<ModernWorkElevateOptions>? options = null)
+        IOptions<ModernWorkElevateOptions>? options = null,
+        ILogger<EligibilityAggregator>? logger = null)
     {
         var role = new Mock<IPimRoleService>();
         role
@@ -479,7 +529,7 @@ public sealed class EligibilityAggregatorTests
         var bundle = new AccountScopedServiceBundle(role.Object, group.Object, azure, Mock.Of<IPolicyService>());
         var scoped = new Mock<IAccountScopedServices>();
         scoped.Setup(s => s.GetServicesFor(account)).Returns(bundle);
-        return new EligibilityAggregator(scoped.Object, options ?? NoOptions, NullLogger<EligibilityAggregator>.Instance);
+        return new EligibilityAggregator(scoped.Object, options ?? NoOptions, logger ?? NullLogger<EligibilityAggregator>.Instance);
     }
 
     private static IPimGroupService EmptyGroupService()

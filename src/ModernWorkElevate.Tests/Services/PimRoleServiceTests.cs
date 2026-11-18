@@ -9,6 +9,10 @@ using ModernWorkElevate.Tests.TestSupport;
 
 public sealed class PimRoleServiceTests
 {
+    private const string UpnInMessageError = """
+        { "error": { "code": "Authorization_RequestDenied", "message": "Insufficient privileges for user 'alice@contoso.com'.", "innerError": { "request-id": "req-upn-1" } } }
+        """;
+
     private const string QueryPatternError = """
         { "error": { "code": "BadRequest", "message": "The query pattern is not supported by the service; if you are using '$expand' or '$select', some properties might not be retrievable." } }
         """;
@@ -235,6 +239,40 @@ public sealed class PimRoleServiceTests
         Assert.False(result.IsSuccess);
         Assert.NotNull(result.Error);
         Assert.Equal(ErrorSeverity.StepUpRequired, result.Error.Severity);
+    }
+
+    [Fact]
+    public async Task ActivateAsync_ErrorMessageNamingTheUser_IsLoggedWithoutTheUpn()
+    {
+        var handler = new FakeHttpMessageHandler(
+            FakeHttpMessageHandler.JsonResponse(UpnInMessageError, HttpStatusCode.Forbidden));
+        var logger = new CapturingLogger<PimRoleService>();
+        var service = new PimRoleService(GraphClientTestBuilder.Build(handler), logger);
+
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotEmpty(logger.Entries);
+        Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Authorization_RequestDenied", logger.AllText, StringComparison.Ordinal);
+        Assert.Contains("403", logger.AllText, StringComparison.Ordinal);
+        Assert.Contains("req-upn-1", logger.AllText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetEligibleRolesAsync_ExpansionRefusalNamingTheUser_IsLoggedWithoutTheUpn()
+    {
+        var handler = new FakeHttpMessageHandler(
+            FakeHttpMessageHandler.JsonResponse(UpnInMessageError, HttpStatusCode.BadRequest),
+            FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("directory-eligibilities.json")));
+        var logger = new CapturingLogger<PimRoleService>();
+        var service = new PimRoleService(GraphClientTestBuilder.Build(handler), logger);
+
+        await service.GetEligibleRolesAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(logger.Entries);
+        Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Authorization_RequestDenied", logger.AllText, StringComparison.Ordinal);
     }
 
     private static ActivationRequest SampleRequest()

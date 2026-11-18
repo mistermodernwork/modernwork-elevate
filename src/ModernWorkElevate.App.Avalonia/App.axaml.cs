@@ -22,6 +22,7 @@ using ModernWorkElevate.Core.Auth;
 using ModernWorkElevate.Core.Caching;
 using ModernWorkElevate.Core.Configuration;
 using ModernWorkElevate.Core.Diagnostics;
+using ModernWorkElevate.Core.ErrorHandling;
 using ModernWorkElevate.Core.Graph;
 using ModernWorkElevate.Core.Services;
 using Serilog;
@@ -91,7 +92,7 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Log.Fatal(ex, "Host startup failed");
+            Log.Fatal(LogRedaction.ForLog(ex), "Host startup failed");
             desktop.Shutdown(1);
             return;
         }
@@ -105,7 +106,7 @@ public partial class App : Application
         var toasts = Services.GetRequiredService<IToastService>();
         Dispatcher.UIThread.UnhandledException += (_, e) =>
         {
-            Log.Error(e.Exception, "Unhandled exception on the UI thread");
+            Log.Error(LogRedaction.ForLog(e.Exception), "Unhandled exception on the UI thread");
 
             // A failing shutdown must still end the process, not leave it running on a disposed host.
             if (_shuttingDown)
@@ -124,7 +125,16 @@ public partial class App : Application
         // Off the UI thread nothing keeps the process alive; at least the cause reaches the log.
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
         {
-            Log.Fatal(e.ExceptionObject as Exception, "Unhandled exception; the app ends");
+            // ExceptionObject need not be an Exception (other CLR languages can throw anything).
+            if (e.ExceptionObject is Exception exception)
+            {
+                Log.Fatal(LogRedaction.ForLog(exception), "Unhandled exception; the app ends");
+            }
+            else
+            {
+                Log.Fatal("Unhandled non-exception object {Type}; the app ends", e.ExceptionObject?.GetType().FullName);
+            }
+
             Log.CloseAndFlush();
         };
 
@@ -132,7 +142,7 @@ public partial class App : Application
         // above; this logs it, late, when the task is collected.
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
-            Log.Error(e.Exception, "Unobserved task exception");
+            Log.Error(LogRedaction.ForLog(e.Exception), "Unobserved task exception");
             e.SetObserved();
         };
 

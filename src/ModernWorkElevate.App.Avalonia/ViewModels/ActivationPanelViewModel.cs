@@ -855,7 +855,7 @@ public sealed partial class ActivationPanelViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Reading eligible child scopes failed (tenant {TenantId})", account.TenantId);
+                _logger.LogWarning(LogRedaction.ForLog(ex), "Reading eligible child scopes failed (tenant {TenantId})", account.TenantId);
                 notice = PimErrorMapper.Describe(
                     PimErrorMapper.MapException(ex, _options.HostingFor(account.Cloud, account.TenantId)),
                     account.AuthMethod);
@@ -1199,7 +1199,7 @@ public sealed partial class ActivationPanelViewModel : ObservableObject
             // Offline, timeout or an MSAL failure (e.g. cancelled WAM prompt) —
             // the panel stays open with a friendly message and the user can retry.
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "Activation submit failed (tenant {TenantId}, validationOnly {IsValidationOnly})",
                 account.TenantId,
                 request.IsValidationOnly);

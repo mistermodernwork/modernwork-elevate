@@ -475,7 +475,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Shell initialization failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Shell initialization failed");
         }
 
         _countdownTimer.Start();
@@ -638,7 +638,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Remove account failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Remove account failed");
             _toastService.ShowError("Remove account", PimErrorMapper.MapException(ex).Message);
             return false;
         }
@@ -791,7 +791,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Refresh failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Refresh failed");
         }
         finally
         {
@@ -848,7 +848,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Approval status check failed");
+            _logger.LogWarning(LogRedaction.ForLog(ex), "Approval status check failed");
         }
     }
 
@@ -1139,7 +1139,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
                     // user falls back to the lazy fetch in ActivateAsync,
                     // which raises a toast if it also fails.
                     _logger.LogDebug(
-                        ex,
+                        LogRedaction.ForLog(ex),
                         "Policy prefetch failed for {Role} in tenant {TenantId}",
                         target.Eligibility.DisplayName,
                         target.Account.TenantId);
@@ -1152,7 +1152,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Policy prefetch loop terminated unexpectedly");
+            _logger.LogWarning(LogRedaction.ForLog(ex), "Policy prefetch loop terminated unexpectedly");
         }
     }
 
@@ -1281,7 +1281,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Loading policy failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Loading policy failed");
             var mapped = PimErrorMapper.MapException(ex, _options.HostingFor(account.Cloud, account.TenantId)).Message;
             _toastService.ShowError("Activation", mapped);
             item.ActivationErrorText = mapped;
@@ -1371,7 +1371,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Loading policy for re-activation failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Loading policy for re-activation failed");
             _toastService.ShowError("Extend time", PimErrorMapper.MapException(ex, _options.HostingFor(account.Cloud, account.TenantId)).Message);
         }
     }
@@ -1603,7 +1603,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Ending the running activation failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Ending the running activation failed");
             return PimErrorMapper.MapException(ex, _options.HostingFor(account.Cloud, account.TenantId));
         }
     }
@@ -1688,7 +1688,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Deactivation failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Deactivation failed");
             var mapped = PimErrorMapper.MapException(ex, _options.HostingFor(item.Account.Cloud, item.Account.TenantId)).Message;
             _toastService.ShowError("Deactivation failed", mapped);
             SetDeactivationErrorText(deactivationKey, $"Deactivation failed — {mapped}");
@@ -1948,7 +1948,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Refreshing the Verified state in Settings failed");
+            _logger.LogError(LogRedaction.ForLog(ex), "Refreshing the Verified state in Settings failed");
         }
     }
 
@@ -2147,7 +2147,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         catch (Exception ex)
         {
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "Failed to fetch tenant name for enrollment (oid {ObjectId}, tenant {TenantId})",
                 item.Account.ObjectId,
                 item.Account.TenantId);

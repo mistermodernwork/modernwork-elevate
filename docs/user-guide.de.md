@@ -352,7 +352,8 @@ gerechnet hat. Sie läuft weiter; was du gerade angeklickt hast, hat womöglich 
 prüfen und noch einmal versuchen. Die Ursache steht im Log.
 
 **Alles andere** — **Settings → Diagnostics → Open log folder**. Das Log enthält keine Passwörter,
-keine Tokens und keinen Begründungstext; es kann bedenkenlos an ein Ticket angehängt werden.
+keine Tokens, keine Anmeldenamen (UPN) oder Mailadressen und keinen Begründungstext; es kann
+bedenkenlos an ein Ticket angehängt werden.
 
 ## Was auf deinem Rechner landet
 
