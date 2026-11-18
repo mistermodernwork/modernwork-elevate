@@ -8,7 +8,7 @@
     Nicht Teil der .slnx: das WiX-SDK baut nur unter Windows, Core und Tests sollen auch unter Linux bauen.
   -->
   <PropertyGroup>
-    <ProductVersion Condition="'$(ProductVersion)' == ''">1.4.0</ProductVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">1.4.1</ProductVersion>
     <InstallerPlatform Condition="'$(InstallerPlatform)' == ''">x64</InstallerPlatform>
     <PublishDir Condition="'$(PublishDir)' == ''">..\..\artifacts\publish\win-x64\</PublishDir>
     <!-- build.ps1 übergibt den Pfad ohne abschließenden Backslash (Leerzeichen im Pfad, "\" vor dem
