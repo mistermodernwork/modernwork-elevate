@@ -18,34 +18,81 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license" />
 </p>
 
+<p align="center">
+  <a href="#set-it-up-in-three-steps"><b>Set it up</b></a> ·
+  <a href="docs/user-guide.md"><b>User guide</b></a> (<a href="docs/user-guide.de.md">Deutsch</a>) ·
+  <a href="https://github.com/mistermodernwork/modernwork-elevate/releases/latest"><b>Download</b></a> ·
+  <a href="#security-and-privacy"><b>Security &amp; privacy</b></a>
+</p>
+
 <p align="center"><sub>A <b>mistermodernwork</b> project — tools for the modern workplace on Microsoft 365, Entra and Intune.</sub></p>
 
 ---
 
-Privileged Identity Management only protects you if people actually use it. When activating a role
-means a browser, the portal and seven clicks per tenant, admins stop activating and start asking for
-permanent roles. **ModernWork Elevate** puts every role you are eligible for, in every tenant, behind an icon
-next to the clock: three clicks to activate, a glance to see whether you are privileged right now,
-and roles that end on their own.
+## What is this?
 
-ModernWork Elevate is designed for organizations that manage their devices centrally: it installs per
-machine with an MSI, never updates itself, keeps no tokens on disk, signs in only through the
-Windows account broker, and is configured through Group Policy or Intune.
+A small Windows app for admins who use **Microsoft Entra Privileged Identity Management (PIM)**.
+Your admin rights are not permanent — you activate them when you need them. Normally that means
+the browser, the Entra portal and seven clicks per tenant. With ModernWork Elevate you click the
+icon next to the clock, pick the role, type a reason, and it is active — in every tenant you
+manage. When the time is up, the role ends on its own.
 
-| You want to … | Read |
-| --- | --- |
-| understand the security design | [docs/security-model.md](docs/security-model.md) |
-| set up the App Registration | [docs/app-registration-setup.md](docs/app-registration-setup.md) |
-| build, sign and roll it out (Intune / ConfigMgr / GPO) | [docs/deployment.md](docs/deployment.md) |
-| write WDAC / AppLocker rules | [docs/code-signing-wdac.md](docs/code-signing-wdac.md) |
-| learn the app as a user | [docs/user-guide.md](docs/user-guide.md) · [Deutsch](docs/user-guide.de.md) |
-| require a fresh sign-in for every activation | [docs/fresh-sign-in.md](docs/fresh-sign-in.md) |
-| report a vulnerability | [SECURITY.md](SECURITY.md) |
-| contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
+- **For:** IT and identity admins with PIM-eligible roles, on managed Windows 11 devices.
+- **Covers:** Entra ID directory roles, PIM for Groups and PIM for Azure resources — one list,
+  many tenants and accounts.
+- **Never:** asks for a password, stores tokens on disk, runs a server or sends data anywhere but
+  Microsoft. No telemetry.
+
+![Seven steps per tenant in the Entra admin center, three clicks for every tenant with ModernWork Elevate](docs/images/why.svg)
+
+## Set it up in three steps
+
+You need Windows 11 25H2 or later, Microsoft Entra ID P2 (or Entra ID Governance) and an account
+that can grant admin consent in the tenant.
+
+**1. Register the app in Entra** — once per tenant, with PowerShell 7 and the
+`Microsoft.Graph.Applications` module:
+
+```powershell
+.\scripts\create-app-registration.ps1 -DisplayName "ModernWork Elevate" -SignInAudience AzureADMyOrg
+```
+
+The script creates the App Registration, requests the delegated permissions, grants admin consent
+and prints your **tenant id** and **client id** — you need both in step 3.
+Prefer the portal? [docs/app-registration-setup.md](docs/app-registration-setup.md).
+
+**2. Install the MSI** — download it from the
+[latest release](https://github.com/mistermodernwork/modernwork-elevate/releases/latest)
+(`x64` or `arm64`) and install it, or roll it out with Intune / Configuration Manager:
+
+```cmd
+msiexec /i ModernWorkElevate-<version>-x64.msi /qn /norestart
+```
+
+> The release MSIs are **not code-signed** — fine for a pilot, but SmartScreen warns and
+> WDAC/AppLocker environments block them. For production, build and sign it with your own
+> certificate in one command: [docs/deployment.md](docs/deployment.md#3-build-and-sign).
+
+**3. Tell it your tenant** — pick one:
+
+- **Central (recommended):** import the policy templates from the release
+  (`ModernWorkElevate-PolicyTemplates.zip`) into Group Policy or Intune and set
+  *Pre-configured tenants* to `<tenant-id>` = `<client-id>;Contoso;Global`.
+- **Per user, by script:** run in the user's context
+  `"%ProgramFiles%\ModernWork Elevate\ModernWorkElevate.exe" --tenant-id <tenant-id> --client-id <client-id> --label "Contoso"`
+  ([details](docs/unattended-deployment.md)).
+- **By hand:** the user opens the app, clicks **Set up your first tenant** and enters both ids.
+
+**Done.** Users now click the tray icon → **Add account** → **Sign in**, choose their admin account,
+pick a role, give a reason and press **Activate**. The [user guide](docs/user-guide.md)
+([Deutsch](docs/user-guide.de.md)) walks through it with pictures.
+
+Rolling out to many devices — detection rules, upgrades, uninstall, proxy, troubleshooting — is in
+**[docs/deployment.md](docs/deployment.md)** ([Deutsch](docs/deployment.de.md)).
 
 ## Features
 
-![Seven steps per tenant in the Entra admin center, three clicks for every tenant with ModernWork Elevate](docs/images/why.svg)
+![The four tray icon states on a light and a dark taskbar: red not signed in, grey nothing active, green privileged, amber expiring soon](docs/images/tray-states.svg)
 
 - **All three PIM surfaces in one list** — Entra ID directory roles, PIM for Groups (membership and
   ownership) and PIM for Azure resources, grouped per tenant, one card per tenant.
@@ -65,11 +112,9 @@ Windows account broker, and is configured through Group Policy or Intune.
 - **Windows 11 native** — rounded corners and shadow from Windows, Segoe UI Variable and Fluent
   icons, your Windows accent colour, light and dark theme.
 
-![The four tray icon states on a light and a dark taskbar: red not signed in, grey nothing active, green privileged, amber expiring soon](docs/images/tray-states.svg)
-
 ![An Azure role eligible on a management group reaches 32 subscriptions; the app asks where to activate it, with nothing preselected, and you activate the two you need](docs/images/azure-scope.svg)
 
-## Security
+## Security and privacy
 
 This is a privileged-access tool. The design choices are not preferences:
 
@@ -89,56 +134,34 @@ This is a privileged-access tool. The design choices are not preferences:
 The app activates only what someone already made you eligible for. Maximum duration, approval, MFA
 and ticket rules are enforced by Entra, not by the app.
 
+**Privacy / GDPR:** the app has no backend and sends nothing to its authors — data goes only to
+Microsoft Entra, Microsoft Graph and Azure Resource Manager in your own tenants, under your
+organization's existing Microsoft agreement. What stays on the device, for how long, and how to
+remove it: [PRIVACY.md](PRIVACY.md). Design details and known limitations:
+[docs/security-model.md](docs/security-model.md) ([Deutsch](docs/security-model.de.md)).
+Report a vulnerability: [SECURITY.md](SECURITY.md).
+
+## Documentation
+
+| You want to … | Read |
+| --- | --- |
+| use the app day to day | [User guide](docs/user-guide.md) · [Deutsch](docs/user-guide.de.md) |
+| set up the App Registration by hand | [docs/app-registration-setup.md](docs/app-registration-setup.md) |
+| build, sign and roll it out (Intune / ConfigMgr / GPO) | [docs/deployment.md](docs/deployment.md) · [Deutsch](docs/deployment.de.md) |
+| configure tenants per user by script | [docs/unattended-deployment.md](docs/unattended-deployment.md) |
+| write WDAC / AppLocker rules | [docs/code-signing-wdac.md](docs/code-signing-wdac.md) · [Deutsch](docs/code-signing-wdac.de.md) |
+| require a fresh sign-in for every activation | [docs/fresh-sign-in.md](docs/fresh-sign-in.md) |
+| understand the security design | [docs/security-model.md](docs/security-model.md) · [Deutsch](docs/security-model.de.md) |
+| know what data goes where | [PRIVACY.md](PRIVACY.md) |
+| report a vulnerability | [SECURITY.md](SECURITY.md) |
+| contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
 ## Requirements
 
 - Windows 11 25H2 (build 26200) or later, x64 or ARM64
 - .NET Runtime 10 or later (the Desktop Runtime is not required)
 - Microsoft Entra ID P2 or Entra ID Governance in each tenant
 - An App Registration owned by your organization, admin-consented in each tenant
-
-## Quick start for administrators
-
-**1. Create the App Registration** (once; PowerShell 7 with `Microsoft.Graph.Applications`):
-
-```powershell
-.\scripts\create-app-registration.ps1 -DisplayName "ModernWork Elevate" -SignInAudience AzureADMyOrg
-```
-
-It creates the registration with the WAM redirect URI, requests the delegated permissions, keeps
-public client flows off, grants admin consent and prints the tenant and client id.
-Manual steps: [docs/app-registration-setup.md](docs/app-registration-setup.md).
-
-**2. Build and sign** (Windows, .NET SDK 10):
-
-```powershell
-pwsh -NoProfile -File .\build\build.ps1 -CertificateThumbprint <SHA1> -SignUnsignedDependencies
-```
-
-Output in `artifacts\msi`: the MSI, a detection script matching the version, a user-data clean-up
-script and the policy templates.
-
-**3. Deploy** with Intune (Win32 app, system context) or Configuration Manager:
-
-```cmd
-msiexec /i ModernWorkElevate-<version>-x64.msi /qn /norestart
-```
-
-**4. Configure centrally** — import `packaging/policy/ModernWorkElevate.admx` into Group Policy or
-Intune and set the tenants:
-
-```reg
-[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate\Tenants]
-"<tenant-id>"="<client-id>;Contoso;Global"
-
-[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate]
-"LockTenants"=dword:00000001
-```
-
-**5. Users** click the tray icon → **Add account** → **Sign in**, pick their admin account in the
-Windows account picker, choose a role, give a reason, **Activate**.
-
-The complete runbook — detection rules, upgrade, uninstall, footprint, troubleshooting — is in
-**[docs/deployment.md](docs/deployment.md)**.
 
 ## Configuration reference
 
@@ -150,6 +173,30 @@ The complete runbook — detection rules, upgrade, uninstall, footprint, trouble
 | Per-user tenant entry | `ModernWorkElevate.exe --tenant-id … --client-id …` | For scripts in the user's context — [docs/unattended-deployment.md](docs/unattended-deployment.md) |
 | Graph scopes | `appsettings.json` in the install folder | Changing them requires new admin consent |
 
+The same tenant policy as a `.reg` file:
+
+```reg
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate\Tenants]
+"<tenant-id>"="<client-id>;Contoso;Global"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\ModernWorkElevate]
+"LockTenants"=dword:00000001
+```
+
+## Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| Consent dialog when signing in | A requested permission is not admin-consented in that tenant — compare with [the list](docs/app-registration-setup.md#3-api-permissions-delegated). A broader permission does not satisfy a request for a narrower one. |
+| "Couldn't load eligibilities for this tenant" | Check `%LOCALAPPDATA%\ModernWorkElevate\logs`; its first line names the running version. |
+| "Azure resource roles unavailable" | Directory roles loaded, Azure Resource Manager did not. The text names the cause — most often a proxy or firewall blocking the Azure Resource Manager endpoint (**Network check** shows it) or missing Azure Service Management consent. The app retries on its own and after the network comes back. |
+| Blank sign-in window | A blocked Microsoft endpoint — run **Settings → Diagnostics → Network check** and send the report to the network team. |
+| App exits at start | Windows older than 25H2 (exit code `3`). |
+| Build fails with `NU1301 … 407` | Proxy authentication for NuGet — use an internal feed or restore once outside the proxy. |
+
+More in the [user guide](docs/user-guide.md#when-something-does-not-work) and the
+[deployment guide](docs/deployment.md#11-troubleshooting).
+
 ## Building from source
 
 ```powershell
@@ -160,11 +207,12 @@ dotnet test
 ```
 
 Warnings are errors and StyleCop runs on every build. Core and the tests also build on Linux
-(`-p:EnableWindowsTargeting=true`); the app runs on Windows only. Behind a proxy that rejects
-NuGet with `407`, use `build.ps1 -NuGetSource <internal feed>` — see
-[docs/deployment.md](docs/deployment.md#3-build-and-sign).
+(`-p:EnableWindowsTargeting=true`); the app runs on Windows only. The whole pipeline — tests,
+publish, signing, MSI — is `build\build.ps1`; behind a proxy that rejects NuGet with `407`, use
+`build.ps1 -NuGetSource <internal feed>` — see [docs/deployment.md](docs/deployment.md#3-build-and-sign).
 
-## Repository layout
+<details>
+<summary>Repository layout and stack</summary>
 
 ```text
 src/
@@ -184,19 +232,7 @@ docs/                              Guides, ADRs, images
 Stack: .NET 10 · Avalonia 12 · CommunityToolkit.Mvvm · MSAL.NET + Windows broker · Microsoft Graph
 SDK v5 · Azure Resource Manager REST · Serilog · xUnit + Moq · WiX v5.
 
-## Troubleshooting
-
-| Symptom | What to do |
-| --- | --- |
-| Consent dialog when signing in | A requested permission is not admin-consented in that tenant — compare with [the list](docs/app-registration-setup.md#3-api-permissions-delegated). A broader permission does not satisfy a request for a narrower one. |
-| "Couldn't load eligibilities for this tenant" | Check `%LOCALAPPDATA%\ModernWorkElevate\logs`; its first line names the running version. |
-| "Azure resource roles unavailable" | Directory roles loaded, Azure Resource Manager did not. The text names the cause — most often a proxy or firewall blocking the Azure Resource Manager endpoint (**Network check** shows it) or missing Azure Service Management consent. The app retries on its own and after the network comes back. |
-| Blank sign-in window | A blocked Microsoft endpoint — run **Settings → Diagnostics → Network check** and send the report to the network team. |
-| App exits at start | Windows older than 25H2 (exit code `3`). |
-| Build fails with `NU1301 … 407` | Proxy authentication for NuGet — use an internal feed or restore once outside the proxy. |
-
-More in the [user guide](docs/user-guide.md#when-something-does-not-work) and the
-[deployment guide](docs/deployment.md#11-troubleshooting).
+</details>
 
 ## Contributing and license
 
