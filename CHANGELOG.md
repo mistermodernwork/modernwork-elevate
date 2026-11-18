@@ -3,6 +3,14 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
+## 1.4.1
+
+First release of the 1.4 line; contains everything listed under 1.4.0.
+
+- 1.4.0 was tagged but never published: the release workflow had become invalid (GitHub evaluates
+  `${{ }}` even inside comments of a `run:` block, and an empty one rejected the whole file), so
+  the tag started no build. Fixed; the app code is the same as in 1.4.0.
+
 ## 1.4.0
 
 - **Optional check for new versions.** Settings → Updates → *Check for new versions* (off by
