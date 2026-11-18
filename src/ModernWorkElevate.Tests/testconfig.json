@@ -1,0 +1,10 @@
+{
+  "platformOptions": {
+    "Coverlet": {
+      "include": "[ModernWorkElevate.Core]*",
+      "excludeByAttribute": "GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute",
+      "skipAutoProps": true,
+      "format": "cobertura"
+    }
+  }
+}

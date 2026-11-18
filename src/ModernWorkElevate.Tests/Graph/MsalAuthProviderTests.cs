@@ -35,7 +35,7 @@ public sealed class MsalAuthProviderTests
             URI = new Uri("https://graph.microsoft.com/v1.0/me"),
         };
 
-        await provider.AuthenticateRequestAsync(request);
+        await provider.AuthenticateRequestAsync(request, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("Bearer access-token-1", Assert.Single(request.Headers["Authorization"]));
     }
@@ -56,7 +56,7 @@ public sealed class MsalAuthProviderTests
             URI = new Uri("https://graph.microsoft.com/v1.0/me"),
         };
 
-        await provider.AuthenticateRequestAsync(request);
+        await provider.AuthenticateRequestAsync(request, cancellationToken: TestContext.Current.CancellationToken);
 
         authService.Verify(
             a => a.AcquireTokenForAccountAsync(AccountId, TenantId, Cloud, Scopes, null, false, It.IsAny<CancellationToken>()),
@@ -85,7 +85,7 @@ public sealed class MsalAuthProviderTests
         };
         var context = new Dictionary<string, object> { ["claims"] = "claims-blob" };
 
-        await provider.AuthenticateRequestAsync(request, context);
+        await provider.AuthenticateRequestAsync(request, context, TestContext.Current.CancellationToken);
 
         authService.Verify(
             a => a.AcquireTokenForAccountAsync(
@@ -122,7 +122,7 @@ public sealed class MsalAuthProviderTests
         };
         request.AddRequestOptions([new AuthContextRequestOption { ClaimsJson = "proactive-claims" }]);
 
-        await provider.AuthenticateRequestAsync(request);
+        await provider.AuthenticateRequestAsync(request, cancellationToken: TestContext.Current.CancellationToken);
 
         authService.Verify(
             a => a.AcquireTokenForAccountAsync(
@@ -160,7 +160,7 @@ public sealed class MsalAuthProviderTests
         request.AddRequestOptions([new AuthContextRequestOption { ClaimsJson = "proactive-claims" }]);
         var context = new Dictionary<string, object> { ["claims"] = "server-claims" };
 
-        await provider.AuthenticateRequestAsync(request, context);
+        await provider.AuthenticateRequestAsync(request, context, TestContext.Current.CancellationToken);
 
         authService.Verify(
             a => a.AcquireTokenForAccountAsync(

@@ -25,7 +25,7 @@ public sealed class NetworkDiagnosticsServiceTests
         var service = CreateService(request =>
             request.RequestUri!.Host == "aadcdn.msauth.net" ? dns : null);
 
-        var report = await service.RunAsync();
+        var report = await service.RunAsync(TestContext.Current.CancellationToken);
 
         // Only the Global group: the app has no update feed to probe.
         var global = Assert.Single(report.Groups);
@@ -49,7 +49,7 @@ public sealed class NetworkDiagnosticsServiceTests
                 : null,
             issuers => issuers["aadcdn.msftauth.net"] = "CN=CorpProxy CA");
 
-        var report = await service.RunAsync();
+        var report = await service.RunAsync(TestContext.Current.CancellationToken);
 
         var tls = Assert.Single(report.Groups[0].Results, r => r.Status == NetworkProbeStatus.TlsFailure);
         Assert.Equal("CN=CorpProxy CA", tls.TlsCertIssuer);
@@ -62,7 +62,7 @@ public sealed class NetworkDiagnosticsServiceTests
         // failure the check exists to show.
         var service = CreateService(_ => null, fallbackStatus: HttpStatusCode.ProxyAuthenticationRequired);
 
-        var report = await service.RunAsync();
+        var report = await service.RunAsync(TestContext.Current.CancellationToken);
 
         Assert.All(report.Groups[0].Results, r => Assert.Equal(NetworkProbeStatus.ProxyAuthenticationRequired, r.Status));
     }
@@ -72,7 +72,7 @@ public sealed class NetworkDiagnosticsServiceTests
     {
         var service = CreateService(_ => null, options: new ModernWorkElevateOptions());
 
-        var report = await service.RunAsync();
+        var report = await service.RunAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(report.Groups);
     }
