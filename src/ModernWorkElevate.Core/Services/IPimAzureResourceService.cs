@@ -31,6 +31,18 @@ public interface IPimAzureResourceService
     Task<ActivationResult> DeactivateAsync(ActiveAssignment assignment, CancellationToken ct = default);
 
     /// <summary>
+    /// Lists the user's own Azure-role activation requests that are waiting for an
+    /// approver (<c>$filter=asRequestor()</c> at tenant root).
+    /// </summary>
+    Task<IReadOnlyList<PendingApprovalRequest>> GetPendingApprovalsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads the status of one of the user's own requests by its name, or <c>null</c>
+    /// when ARM no longer lists it.
+    /// </summary>
+    Task<ActivationStatus?> GetRequestStatusAsync(string requestId, CancellationToken ct = default);
+
+    /// <summary>
     /// Reads the role settings for <paramref name="roleDefinitionId"/> at
     /// <paramref name="scopeId"/>. Uncached — <see cref="IPolicyService"/> owns the cache.
     /// </summary>

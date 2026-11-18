@@ -161,6 +161,57 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyDictionary<SignedInAccount, PendingApprovalFetchResult>>
+        GetAggregatedPendingApprovalsAsync(
+            IEnumerable<SignedInAccount> accounts, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(accounts);
+
+        var snapshot = accounts.ToList();
+        var results = await Task.WhenAll(snapshot.Select(account => FetchPendingApprovalsSafeAsync(account, ct)))
+            .ConfigureAwait(false);
+
+        var dict = new Dictionary<SignedInAccount, PendingApprovalFetchResult>();
+        for (var i = 0; i < snapshot.Count; i++)
+        {
+            dict[snapshot[i]] = results[i];
+        }
+
+        return dict;
+    }
+
+    /// <inheritdoc />
+    public async Task<ActivationStatus?> GetRequestStatusAsync(
+        SignedInAccount account, PimResourceKind kind, string requestId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        var bundle = _accountServices.GetServicesFor(account);
+
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(PerAccountTimeout);
+            return await (kind switch
+            {
+                PimResourceKind.DirectoryRole => bundle.RoleService.GetRequestStatusAsync(requestId, cts.Token),
+                PimResourceKind.AzureResourceRole => bundle.AzureResourceService.GetRequestStatusAsync(requestId, cts.Token),
+                _ => bundle.GroupService.GetRequestStatusAsync(requestId, cts.Token),
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // Unread is not "decided": the caller falls back to whether the role is active.
+            _logger.LogWarning(
+                ex,
+                "Request status read failed for request {RequestId}, account oid {ObjectId} tenant {TenantId}",
+                requestId,
+                account.ObjectId,
+                account.TenantId);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<ActivationResult> ActivateAsync(
         SignedInAccount account, ActivationRequest request, CancellationToken ct = default)
     {
@@ -255,6 +306,96 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
                 account.ObjectId,
                 account.TenantId);
             return (Array.Empty<T>(), PimErrorMapper.DescribeFetchFailure(ex, account.AuthMethod, _options.HostingFor(account.Cloud, account.TenantId)));
+        }
+    }
+
+    /// <summary>
+    /// One account's pending requests across the three surfaces, each read on its own: a
+    /// surface that fails is named in <see cref="PendingApprovalFetchResult.UnreadKinds"/>
+    /// and the others still report. Only when all three fail is it a
+    /// <see cref="PendingApprovalFetchResult.LoadError"/>.
+    /// </summary>
+    private async Task<PendingApprovalFetchResult> FetchPendingApprovalsSafeAsync(SignedInAccount account, CancellationToken ct)
+    {
+        try
+        {
+            return await FetchPendingApprovalsAsync(account, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            // The per-account timeout, or the account's services failing to build.
+            _logger.LogWarning(
+                ex,
+                "Pending approvals fetch failed for account oid {ObjectId} tenant {TenantId}",
+                account.ObjectId,
+                account.TenantId);
+            return new PendingApprovalFetchResult(
+                [],
+                PimErrorMapper.DescribeFetchFailure(ex, account.AuthMethod, _options.HostingFor(account.Cloud, account.TenantId)),
+                new HashSet<PimResourceKind>());
+        }
+    }
+
+    private async Task<PendingApprovalFetchResult> FetchPendingApprovalsAsync(SignedInAccount account, CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(PerAccountTimeout);
+        var bundle = _accountServices.GetServicesFor(account);
+
+        var rolesTask = ReadPendingSurfaceAsync(account, "Directory role", bundle.RoleService.GetPendingApprovalsAsync, cts.Token);
+        var groupsTask = ReadPendingSurfaceAsync(account, "Group", bundle.GroupService.GetPendingApprovalsAsync, cts.Token);
+        var azureTask = FetchAzureSafeAsync<PendingApprovalRequest>(account, bundle.AzureResourceService.GetPendingApprovalsAsync, cts.Token);
+        await Task.WhenAll(rolesTask, groupsTask, azureTask).ConfigureAwait(false);
+
+        var roles = await rolesTask.ConfigureAwait(false);
+        var groups = await groupsTask.ConfigureAwait(false);
+        var azure = await azureTask.ConfigureAwait(false);
+
+        var unread = new HashSet<PimResourceKind>();
+        if (roles.Error is not null)
+        {
+            unread.Add(PimResourceKind.DirectoryRole);
+        }
+
+        if (groups.Error is not null)
+        {
+            unread.Add(PimResourceKind.GroupMembership);
+            unread.Add(PimResourceKind.GroupOwnership);
+        }
+
+        if (azure.LoadError is not null)
+        {
+            unread.Add(PimResourceKind.AzureResourceRole);
+        }
+
+        var loadError = roles.Error is not null && groups.Error is not null && azure.LoadError is not null
+            ? PimErrorMapper.DescribeFetchFailure(roles.Error, account.AuthMethod, _options.HostingFor(account.Cloud, account.TenantId))
+            : null;
+
+        PendingApprovalRequest[] all = [.. roles.Items, .. groups.Items, .. azure.Items];
+        return new PendingApprovalFetchResult(all, loadError, unread);
+    }
+
+    /// <summary>One Graph surface's pending requests, or its failure as a value.</summary>
+    private async Task<(IReadOnlyList<PendingApprovalRequest> Items, Exception? Error)> ReadPendingSurfaceAsync(
+        SignedInAccount account,
+        string surface,
+        Func<CancellationToken, Task<IReadOnlyList<PendingApprovalRequest>>> read,
+        CancellationToken ct)
+    {
+        try
+        {
+            return (await read(ct).ConfigureAwait(false), null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                ex,
+                "{Surface} pending approvals fetch failed for account oid {ObjectId} tenant {TenantId}",
+                surface,
+                account.ObjectId,
+                account.TenantId);
+            return ([], ex);
         }
     }
 

@@ -13,13 +13,17 @@ internal static class ActivationStatusParser
     public static ActivationStatus Parse(string? status) => status switch
     {
         "Provisioned" => ActivationStatus.Provisioned,
-        "Granted" => ActivationStatus.Granted,
+
+        // ARM reports an approver's decision on its own before it provisions.
+        "Granted" or "AdminApproved" => ActivationStatus.Granted,
         "PendingApproval" or "PendingApprovalProvisioning" => ActivationStatus.PendingApproval,
         "PendingScheduleCreation" or "Accepted" or "PendingEvaluation" or "PendingProvisioning"
             or "ProvisioningStarted" or "ScheduleCreated" => ActivationStatus.PendingScheduleCreation,
-        "Denied" => ActivationStatus.Denied,
+        "Denied" or "AdminDenied" => ActivationStatus.Denied,
         "Failed" => ActivationStatus.Failed,
         "Revoked" => ActivationStatus.Revoked,
+        "Canceled" => ActivationStatus.Canceled,
+        "TimedOut" => ActivationStatus.TimedOut,
         _ => ActivationStatus.Unknown,
     };
 }

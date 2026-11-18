@@ -142,6 +142,72 @@ public sealed class PimGroupService : IPimGroupService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PendingApprovalRequest>> GetPendingApprovalsAsync(CancellationToken ct = default)
+    {
+        var response = await _graph.IdentityGovernance.PrivilegedAccess.Group.AssignmentScheduleRequests
+            .FilterByCurrentUserWithOn("principal")
+            .GetAsFilterByCurrentUserWithOnGetResponseAsync(
+                requestConfiguration =>
+                    requestConfiguration.QueryParameters.Filter = "status eq 'PendingApproval'",
+                ct)
+            .ConfigureAwait(false);
+
+        // Only what the user asked for themselves: an owner's or admin's assignment that
+        // awaits approval for this principal is not theirs to wait for.
+        var requests = (response?.Value ?? [])
+            .Where(request => request.Action is ScheduleRequestActions.SelfActivate
+                or ScheduleRequestActions.SelfExtend
+                or ScheduleRequestActions.SelfRenew)
+            .ToList();
+        if (requests.Count == 0)
+        {
+            return [];
+        }
+
+        var groups = await _groupResolver
+            .ResolveAsync(requests.Select(request => request.GroupId ?? string.Empty), ct)
+            .ConfigureAwait(false);
+
+        return requests.Select(request => ToPendingApproval(request, groups)).ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<ActivationStatus?> GetRequestStatusAsync(string requestId, CancellationToken ct = default)
+    {
+        // The id goes into an OData filter: only a GUID gets there.
+        if (!Guid.TryParse(requestId, out var id))
+        {
+            return null;
+        }
+
+        var response = await _graph.IdentityGovernance.PrivilegedAccess.Group.AssignmentScheduleRequests
+            .FilterByCurrentUserWithOn("principal")
+            .GetAsFilterByCurrentUserWithOnGetResponseAsync(
+                requestConfiguration => requestConfiguration.QueryParameters.Filter = $"id eq '{id}'",
+                ct)
+            .ConfigureAwait(false);
+
+        return response?.Value?.FirstOrDefault() is { } request
+            ? ActivationStatusParser.Parse(request.Status)
+            : null;
+    }
+
+    private static PendingApprovalRequest ToPendingApproval(
+        PrivilegedAccessGroupAssignmentScheduleRequest request,
+        IReadOnlyDictionary<string, GroupInfo> groups)
+    {
+        var groupId = request.GroupId ?? string.Empty;
+        return new PendingApprovalRequest(
+            Kind: ToKind(request.AccessId),
+            DisplayName: groups.GetValueOrDefault(groupId)?.DisplayName ?? FallbackName(groupId),
+            ResourceId: groupId,
+            ScopeId: groupId,
+            RequestId: request.Id ?? string.Empty,
+            RequestedAt: request.CreatedDateTime,
+            RequestedDuration: request.ScheduleInfo?.Expiration?.Duration);
+    }
+
     private static PimResourceKind ToKind(PrivilegedAccessGroupRelationships? accessId) =>
         accessId == PrivilegedAccessGroupRelationships.Owner
             ? PimResourceKind.GroupOwnership

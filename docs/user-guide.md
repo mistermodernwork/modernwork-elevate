@@ -116,8 +116,8 @@ Then **Activate**. The role moves to ACTIVE within a few seconds.
 ### Notices worth reading
 
 **ℹ This activation requires approval** — you are not getting the role now. The request goes to an
-approver and waits. The row stays visible as pending, and the role activates when they say yes.
-Nothing more to do on your side; chase the approver, not the app.
+approver and waits under **WAITING FOR APPROVAL** (see below), and the role activates when they say
+yes. Nothing more to do on your side; chase the approver, not the app.
 
 **ℹ This activation may require additional verification (MFA)** — Windows asks you to confirm during
 the activation.
@@ -132,6 +132,26 @@ shows neither notice.
 **⚠ This group can carry directory roles** — on a PIM-for-Groups entry. Group membership can carry
 admin roles with it, so activating this may grant more than the group's name suggests. Worth knowing
 what you are switching on.
+
+### Waiting for approval
+
+Every request of yours that an approver has not decided yet is listed under **WAITING FOR
+APPROVAL**, above ACTIVE — with the user, tenant and scope it is for, and when you asked and for how
+long ("Requested 14:32 · 2h"). It is read from Microsoft, not remembered by the app: it is still
+there after a restart, and a request you made in the Entra or Azure portal shows up too.
+
+While something is waiting, the app checks it every 15 seconds. As soon as the request is decided
+you get a notification, and the list changes with it:
+
+| Notification | What happened |
+| --- | --- |
+| **Approved** — "… was approved and is now active." | The row leaves WAITING FOR APPROVAL and the role appears under ACTIVE with its countdown. |
+| **Request denied** | An approver said no. Nothing is active. |
+| **Request expired** | No approver answered in time. Request again if you still need the role. |
+| **Request canceled** | The request was withdrawn, by you in the portal or by an administrator. |
+
+The notification does not say *who* approved: the app reads only the request's status, which needs
+no permission beyond what it already has. Microsoft's own approval email names the approver.
 
 ## Azure roles: choosing where the role applies
 

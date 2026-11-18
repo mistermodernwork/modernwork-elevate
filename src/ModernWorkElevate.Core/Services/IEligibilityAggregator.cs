@@ -48,6 +48,24 @@ public interface IEligibilityAggregator
         GetAggregatedEligibilitiesAsync(
             IEnumerable<SignedInAccount> accounts, CancellationToken ct = default);
 
+    /// <summary>
+    /// Fans out across <paramref name="accounts"/> in parallel and returns each account's
+    /// own activation requests that are waiting for an approver. A read that fails is
+    /// reported (<see cref="PendingApprovalFetchResult.LoadError"/>,
+    /// <see cref="PendingApprovalFetchResult.AzureAvailable"/>), never returned as an
+    /// empty list — "nothing pending" would announce decisions nobody made.
+    /// </summary>
+    Task<IReadOnlyDictionary<SignedInAccount, PendingApprovalFetchResult>>
+        GetAggregatedPendingApprovalsAsync(
+            IEnumerable<SignedInAccount> accounts, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads the status of one of <paramref name="account"/>'s requests, or <c>null</c>
+    /// when it cannot be read. Never prompts for sign-in: this runs in the background.
+    /// </summary>
+    Task<ActivationStatus?> GetRequestStatusAsync(
+        SignedInAccount account, PimResourceKind kind, string requestId, CancellationToken ct = default);
+
     /// <summary>Activates an eligibility under <paramref name="account"/>.</summary>
     Task<ActivationResult> ActivateAsync(
         SignedInAccount account, ActivationRequest request, CancellationToken ct = default);

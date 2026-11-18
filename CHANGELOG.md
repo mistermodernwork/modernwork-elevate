@@ -3,8 +3,18 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
-## Unreleased
+## 1.4.0
 
+- **Installer detects .NET 10.** The MSI's runtime check never found an installed runtime — WiX put
+  the search depth on the directory row, not the file row, so `System.Private.CoreLib.dll` was never
+  looked for in the version folder — and every install needed `SKIPRUNTIMECHECK=1`. The check now
+  reads the version of `dotnet.exe`; the property is only needed when the runtime comes later.
+- **Waiting for approval.** Your own activation requests that an approver has not decided yet are
+  listed above ACTIVE — for directory roles, PIM for Groups and Azure resource roles, read from
+  Microsoft, so they survive a restart and include requests made in the portal. While something
+  waits, the app checks every 15 seconds; an approval, denial, expiry or cancellation raises a
+  notification, and an approved role switches to ACTIVE at once. No new permission: the app reads
+  the request status only, so the notification does not name the approver.
 - Release builds can be signed with Azure Artifact Signing: the release workflow signs in with
   GitHub OIDC (environment `release`) instead of importing a `.pfx` secret, which new publicly
   trusted certificates no longer allow. `build.ps1` / `sign.ps1` gain `-ArtifactSigningMetadata` and

@@ -184,14 +184,7 @@ public sealed partial class ActiveAssignmentItemViewModel : ObservableObject
     public string TenantLabel => TenantLabelFormatter.Format(TenantName, TenantId);
 
     /// <summary>Localized label for the resource kind.</summary>
-    public string KindLabel => Assignment.Kind switch
-    {
-        PimResourceKind.DirectoryRole => "Directory role",
-        PimResourceKind.GroupMembership => "Group membership",
-        PimResourceKind.GroupOwnership => "Group ownership",
-        PimResourceKind.AzureResourceRole => "Azure resource role",
-        _ => string.Empty,
-    };
+    public string KindLabel => ResourceKindLabels.For(Assignment.Kind);
 
     /// <summary>
     /// The three lines under the role name, each a single bound string.
