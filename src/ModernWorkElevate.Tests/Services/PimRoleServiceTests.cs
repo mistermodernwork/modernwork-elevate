@@ -249,7 +249,7 @@ public sealed class PimRoleServiceTests
         var logger = new CapturingLogger<PimRoleService>();
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), logger);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.NotEmpty(logger.Entries);
@@ -268,7 +268,7 @@ public sealed class PimRoleServiceTests
         var logger = new CapturingLogger<PimRoleService>();
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), logger);
 
-        await service.GetEligibleRolesAsync();
+        await service.GetEligibleRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(logger.Entries);
         Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);

@@ -134,7 +134,7 @@ public sealed class PimGroupServiceTests
             logger);
 
         var eligibility = new PimEligibility(PimResourceKind.GroupMembership, "grp-project-x", "group-1", "group-1", "user-oid-1", null, false);
-        var result = await service.ActivateAsync(new ActivationRequest(eligibility, TimeSpan.FromHours(1), "Project work", null));
+        var result = await service.ActivateAsync(new ActivationRequest(eligibility, TimeSpan.FromHours(1), "Project work", null), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.NotEmpty(logger.Entries);

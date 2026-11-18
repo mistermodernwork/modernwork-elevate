@@ -240,7 +240,7 @@ public sealed class EligibilityAggregatorTests
         var logger = new CapturingLogger<EligibilityAggregator>();
         var aggregator = BuildAggregator(account, azure.Object, logger: logger);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(logger.Entries);
         Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);
@@ -266,7 +266,7 @@ public sealed class EligibilityAggregatorTests
         var logger = new CapturingLogger<EligibilityAggregator>();
         var aggregator = new EligibilityAggregator(scoped.Object, NoOptions, logger);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(logger.Entries);
         Assert.DoesNotContain("@contoso.com", logger.AllText, StringComparison.OrdinalIgnoreCase);

@@ -202,7 +202,7 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
         {
             // Unread is not "decided": the caller falls back to whether the role is active.
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "Request status read failed for request {RequestId}, account oid {ObjectId} tenant {TenantId}",
                 requestId,
                 account.ObjectId,
@@ -325,7 +325,7 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
         {
             // The per-account timeout, or the account's services failing to build.
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "Pending approvals fetch failed for account oid {ObjectId} tenant {TenantId}",
                 account.ObjectId,
                 account.TenantId);
@@ -390,7 +390,7 @@ public sealed class EligibilityAggregator : IEligibilityAggregator
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.LogWarning(
-                ex,
+                LogRedaction.ForLog(ex),
                 "{Surface} pending approvals fetch failed for account oid {ObjectId} tenant {TenantId}",
                 surface,
                 account.ObjectId,

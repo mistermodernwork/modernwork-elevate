@@ -848,7 +848,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAccountsHost
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Approval status check failed");
+            _logger.LogWarning(LogRedaction.ForLog(ex), "Approval status check failed");
         }
     }
 

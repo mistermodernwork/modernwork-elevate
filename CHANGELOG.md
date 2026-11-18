@@ -3,6 +3,13 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
+## Unreleased
+
+- Logs no longer contain sign-in names (UPN) or mail addresses from Graph, Azure Resource Manager or
+  sign-in error messages (for example ARM's `AuthorizationFailed`, which names the caller), including
+  unhandled exceptions; the address is masked, error code, HTTP status and request id stay in the log.
+  Also covers the pending-approval reads added in 1.4.
+
 ## 1.4.1
 
 First release of the 1.4 line; contains everything listed under 1.4.0.
@@ -45,9 +52,6 @@ First release of the 1.4 line; contains everything listed under 1.4.0.
   Microsoft.IdentityModel 8.x instead of the deprecated 7.6), System.Drawing.Common 4.7.3,
   Serilog.Sinks.Console 6.1.1; test tooling updated.
 - Links open in the browser only when they are absolute `https` URLs.
-- Logs no longer contain sign-in names (UPN) or mail addresses from Graph, Azure Resource Manager or
-  sign-in error messages (for example ARM's `AuthorizationFailed`, which names the caller), including
-  unhandled exceptions; the address is masked, error code, HTTP status and request id stay in the log.
 - CI runs with a read-only `GITHUB_TOKEN`; the release job reads the tag name from the
   environment instead of interpolating it into the script.
 

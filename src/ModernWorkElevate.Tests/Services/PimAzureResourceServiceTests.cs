@@ -455,7 +455,7 @@ public sealed class PimAzureResourceServiceTests
         var logger = new CapturingLogger<PimAzureResourceService>();
         var service = Build(handler, logger);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.NotEmpty(logger.Entries);
