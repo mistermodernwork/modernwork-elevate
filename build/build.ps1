@@ -7,6 +7,7 @@
     .\build\build.ps1 -NuGetSource https://artifactory.example.com/api/nuget/v3/nuget-remote
     .\build\build.ps1 -Runtime win-arm64
     .\build\build.ps1 -CertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567 -SignUnsignedDependencies
+    .\build\build.ps1 -ArtifactSigningMetadata .\metadata.json -ArtifactSigningDlib <pfad>\bin\x64\Azure.CodeSigning.Dlib.dll -SignUnsignedDependencies
 
 .NOTES
     Voraussetzungen: Windows, .NET SDK 10 (global.json), Internetzugang zu nuget.org.
@@ -28,6 +29,12 @@ param(
     [string] $CertificateThumbprint,
     [string] $TimestampUrl = 'http://timestamp.digicert.com',
     [string] $SignToolPath,
+
+    # Azure Artifact Signing statt Zertifikat im Speicher: metadata.json (Endpoint, Konto, Profil) und
+    # Azure.CodeSigning.Dlib.dll aus dem NuGet-Paket Microsoft.ArtifactSigning.Client. Anmeldung über
+    # DefaultAzureCredential (in der Release-Pipeline: azure/login mit OIDC). Siehe docs/code-signing-wdac.md.
+    [string] $ArtifactSigningMetadata,
+    [string] $ArtifactSigningDlib,
 
     # Signiert zusätzlich alle Fremd-DLLs/EXEs im Publish-Ordner, die keine gültige Authenticode-Signatur haben.
     [switch] $SignUnsignedDependencies,
@@ -109,7 +116,24 @@ try {
     # Lokale Overrides nie ausliefern (Tenant-/Client-IDs eines Entwicklers).
     Remove-Item (Join-Path $publishDir 'appsettings.local.json') -ErrorAction SilentlyContinue
 
+    # Ein Satz Signatur-Parameter für Binärdateien und MSI: entweder Zertifikat oder Artifact Signing.
+    if ($CertificateThumbprint -and $ArtifactSigningMetadata) { throw '-CertificateThumbprint und -ArtifactSigningMetadata schließen sich aus.' }
+    $signArgs = @{ TimestampUrl = $TimestampUrl; SignToolPath = $SignToolPath }
     if ($CertificateThumbprint) {
+        $signArgs.CertificateThumbprint = $CertificateThumbprint
+    }
+    elseif ($ArtifactSigningMetadata) {
+        if (-not $ArtifactSigningDlib) { throw '-ArtifactSigningMetadata braucht -ArtifactSigningDlib.' }
+        $signArgs.ArtifactSigningMetadata = $ArtifactSigningMetadata
+        $signArgs.ArtifactSigningDlib = $ArtifactSigningDlib
+
+        # Artifact-Signing-Zertifikate gelten nur 72 Stunden: ohne den eigenen Zeitstempeldienst
+        # wäre jede Signatur nach drei Tagen ungültig.
+        if (-not $PSBoundParameters.ContainsKey('TimestampUrl')) { $signArgs.TimestampUrl = 'http://timestamp.acs.microsoft.com' }
+    }
+    $signing = $CertificateThumbprint -or $ArtifactSigningMetadata
+
+    if ($signing) {
         Write-Host '== Signieren' -ForegroundColor Cyan
         $own = Get-ChildItem $publishDir -File | Where-Object { $_.Name -in @('ModernWorkElevate.exe', 'ModernWorkElevate.dll', 'ModernWorkElevate.Core.dll') }
         $toSign = @($own.FullName)
@@ -124,7 +148,7 @@ try {
             }
         }
 
-        & (Join-Path $PSScriptRoot 'sign.ps1') -Files $toSign -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -SignToolPath $SignToolPath
+        & (Join-Path $PSScriptRoot 'sign.ps1') -Files $toSign @signArgs
     }
 
     # Übersicht für WDAC/AppLocker: welche Binärdateien sind wie signiert. Nur informativ –
@@ -159,8 +183,8 @@ try {
             "-p:ProductVersion=$version" "-p:PublishDir=$publishDir" "-p:InstallerPlatform=$platform" "-p:OutputPath=$msiDir"
 
         $msi = Join-Path $msiDir "ModernWorkElevate-$version-$platform.msi"
-        if ($CertificateThumbprint) {
-            & (Join-Path $PSScriptRoot 'sign.ps1') -Files $msi -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -SignToolPath $SignToolPath
+        if ($signing) {
+            & (Join-Path $PSScriptRoot 'sign.ps1') -Files $msi @signArgs
         }
 
         # Erkennungsskript mit passender Version, Bereinigungsskript und Richtlinienvorlagen neben das MSI legen.

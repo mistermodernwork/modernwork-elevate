@@ -5,6 +5,11 @@ entry also ships inside the app as its "what's new" text (`packaging/release-not
 
 ## Unreleased
 
+- Release builds can be signed with Azure Artifact Signing: the release workflow signs in with
+  GitHub OIDC (environment `release`) instead of importing a `.pfx` secret, which new publicly
+  trusted certificates no longer allow. `build.ps1` / `sign.ps1` gain `-ArtifactSigningMetadata` and
+  `-ArtifactSigningDlib`; certificate signing with `-CertificateThumbprint` is unchanged. Without
+  configuration, releases stay unsigned. Setup: `docs/code-signing-wdac.md`.
 - Tests moved from xunit 2.9.3 to xunit v3 (`xunit.v3` 4.0.3) on Microsoft.Testing.Platform:
   `dotnet test` runs in the .NET 10 SDK's MTP mode (`global.json` → `test.runner`), coverage comes
   from `coverlet.MTP` 10.1.1 with its settings in `src/ModernWorkElevate.Tests/testconfig.json`

@@ -27,6 +27,47 @@ pwsh -NoProfile -File .\build\build.ps1 -CertificateThumbprint <SHA1> [-SignUnsi
   `-TimestampUrl`. `-TimestampUrl ''` signs without a timestamp — test builds only, the signature
   then expires with the certificate.
 
+## Signed releases on GitHub (Azure Artifact Signing)
+
+The release workflow (`.github/workflows/release.yml`) signs with
+[Azure Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/) (formerly Trusted
+Signing) once it is configured: no certificate file and no long-lived secret — the job signs in
+with GitHub OIDC, and the private key never leaves Microsoft's HSMs. Until then it builds unsigned,
+as before. It signs the same files as `-SignUnsignedDependencies` locally, then the MSI.
+
+One-time setup:
+
+1. **Artifact Signing account** in an Azure subscription. Its region decides the endpoint for
+   `ARTIFACT_SIGNING_ENDPOINT`, e.g. West Europe → `https://weu.codesigning.azure.net`
+   ([all regions](https://learn.microsoft.com/azure/artifact-signing/how-to-signing-integrations#create-a-json-file)).
+2. **Identity validation** of type *Public Trust*. Available to organizations in the USA, Canada,
+   the EU and the UK with at least three years of verifiable tax history, and to individuals in the
+   USA and Canada; it takes a few business days.
+3. **Certificate profile** of type *Public Trust*.
+4. **Entra app registration for the pipeline**, without a secret: *Certificates & secrets →
+   Federated credentials → GitHub Actions deploying Azure resources*, organization
+   `mistermodernwork`, repository `modernwork-elevate`, entity *Environment*, name `release`.
+5. **Role** *Artifact Signing Certificate Profile Signer* (formerly *Trusted Signing Certificate
+   Profile Signer*) for that app on the certificate profile.
+6. **GitHub environment** `release` (*Settings → Environments*) with the secrets
+   `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ARTIFACT_SIGNING_ENDPOINT`,
+   `ARTIFACT_SIGNING_ACCOUNT`, `ARTIFACT_SIGNING_PROFILE`. Add **required reviewers** so a person
+   approves every signed release, and limit **deployment branches and tags** to the tag pattern
+   `v*` — otherwise a manual run from any branch could sign.
+
+The next `v*` tag then publishes signed MSIs; `signature-report-<rid>.csv` in the release shows the
+publisher of every file. Signing locally with the same profile works after `az login` (your account
+needs the same role):
+
+```powershell
+.\build\build.ps1 -ArtifactSigningMetadata .\metadata.json -ArtifactSigningDlib <path>\bin\x64\Azure.CodeSigning.Dlib.dll -SignUnsignedDependencies
+```
+
+`metadata.json` holds `Endpoint`, `CodeSigningAccountName` and `CertificateProfileName`; the dlib comes
+from the NuGet package `Microsoft.ArtifactSigning.Client`, signtool from `Microsoft.Windows.SDK.BuildTools`
+(10.0.22621.755 or later). The timestamp defaults to `http://timestamp.acs.microsoft.com` — required,
+because Artifact Signing certificates are valid for only 72 hours.
+
 ## Native components
 
 Besides .NET assemblies the app loads these native DLLs from its program folder:
@@ -67,6 +108,12 @@ ConvertFrom-CIPolicy -XmlFilePath .\ModernWorkElevate.xml -BinaryFilePath .\Mode
 ```
 
 Test in audit mode first (CodeIntegrity events 3076/3077).
+
+**Releases signed with Azure Artifact Signing:** the signing certificate is renewed daily, so never
+pin a rule to a thumbprint or a single certificate. Microsoft's guidance is to pin trust to the
+certificate profile's durable EKU (`1.3.6.1.4.1.311.97.…`, listed under *Enhanced Key Usage* in the
+file's signature details), which stays the same for the lifetime of the profile —
+see [Artifact Signing certificate management](https://learn.microsoft.com/azure/artifact-signing/concept-certificate-management#certificate-profile-eku).
 
 ## AppLocker
 

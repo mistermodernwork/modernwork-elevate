@@ -22,6 +22,48 @@
 - Blockiert der Proxy den Zeitstempeldienst, schlägt das Signieren fehl. Dann einen intern erreichbaren
   RFC-3161-Dienst mit `-TimestampUrl` angeben; `-TimestampUrl ''` signiert ohne Zeitstempel (nur Test).
 
+## Signierte Releases auf GitHub (Azure Artifact Signing)
+
+Der Release-Workflow (`.github/workflows/release.yml`) signiert mit
+[Azure Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/) (früher Trusted
+Signing), sobald es eingerichtet ist: keine Zertifikatsdatei und kein langlebiges Secret – der Job
+meldet sich per GitHub-OIDC an, der private Schlüssel verlässt die HSMs von Microsoft nie. Bis dahin
+baut er wie bisher unsigniert. Signiert werden dieselben Dateien wie lokal mit
+`-SignUnsignedDependencies`, danach das MSI.
+
+Einmalige Einrichtung:
+
+1. **Artifact-Signing-Konto** in einem Azure-Abonnement. Die Region bestimmt den Endpunkt für
+   `ARTIFACT_SIGNING_ENDPOINT`, z. B. Westeuropa → `https://weu.codesigning.azure.net`
+   ([alle Regionen](https://learn.microsoft.com/azure/artifact-signing/how-to-signing-integrations#create-a-json-file)).
+2. **Identitätsprüfung** vom Typ *Public Trust*. Möglich für Organisationen in den USA, Kanada, der
+   EU und Großbritannien mit mindestens drei Jahren nachprüfbarer Steuerhistorie sowie für
+   Einzelpersonen in den USA und Kanada; sie dauert einige Werktage.
+3. **Zertifikatprofil** vom Typ *Public Trust*.
+4. **Entra-App-Registrierung für die Pipeline**, ohne Geheimnis: *Zertifikate & Geheimnisse →
+   Verbundanmeldeinformationen → GitHub Actions deploying Azure resources*, Organisation
+   `mistermodernwork`, Repository `modernwork-elevate`, Entität *Environment*, Name `release`.
+5. **Rolle** *Artifact Signing Certificate Profile Signer* (früher *Trusted Signing Certificate
+   Profile Signer*) für diese App auf dem Zertifikatprofil.
+6. **GitHub-Umgebung** `release` (*Settings → Environments*) mit den Secrets `AZURE_CLIENT_ID`,
+   `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ARTIFACT_SIGNING_ENDPOINT`,
+   `ARTIFACT_SIGNING_ACCOUNT`, `ARTIFACT_SIGNING_PROFILE`. **Required reviewers** eintragen, damit
+   jedes signierte Release von einer Person freigegeben wird, und **Deployment branches and tags**
+   auf das Tag-Muster `v*` beschränken – sonst könnte ein manueller Lauf von jedem Branch signieren.
+
+Das nächste Tag `v*` veröffentlicht dann signierte MSIs; `signature-report-<rid>.csv` im Release
+zeigt für jede Datei den Herausgeber. Lokal mit demselben Profil signieren geht nach `az login`
+(das eigene Konto braucht dieselbe Rolle):
+
+```powershell
+.\build\build.ps1 -ArtifactSigningMetadata .\metadata.json -ArtifactSigningDlib <pfad>\bin\x64\Azure.CodeSigning.Dlib.dll -SignUnsignedDependencies
+```
+
+`metadata.json` enthält `Endpoint`, `CodeSigningAccountName` und `CertificateProfileName`; die dlib
+stammt aus dem NuGet-Paket `Microsoft.ArtifactSigning.Client`, signtool aus
+`Microsoft.Windows.SDK.BuildTools` (10.0.22621.755 oder neuer). Zeitstempel ist standardmäßig
+`http://timestamp.acs.microsoft.com` – Pflicht, weil Artifact-Signing-Zertifikate nur 72 Stunden gelten.
+
 ## Native Komponenten
 
 Die App lädt neben .NET-Assemblys diese nativen DLLs aus dem Programmordner:
@@ -58,6 +100,13 @@ ConvertFrom-CIPolicy -XmlFilePath .\ModernWorkElevate.xml -BinaryFilePath .\Mode
 ```
 
 Die Policy-Datei vor der Verteilung im Audit-Modus testen (CodeIntegrity-Ereignisse 3076/3077).
+
+**Mit Azure Artifact Signing signierte Releases:** Das Signaturzertifikat wird täglich erneuert –
+Regeln daher nie an einen Fingerabdruck oder ein einzelnes Zertifikat binden. Microsoft empfiehlt,
+das Vertrauen an die feste EKU des Zertifikatprofils zu knüpfen (`1.3.6.1.4.1.311.97.…`, in den
+Signaturdetails der Datei unter *Erweiterte Schlüsselverwendung*), die über die gesamte Lebensdauer
+des Profils gleich bleibt – siehe
+[Artifact Signing certificate management](https://learn.microsoft.com/azure/artifact-signing/concept-certificate-management#certificate-profile-eku).
 
 ## AppLocker
 
