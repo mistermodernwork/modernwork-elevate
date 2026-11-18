@@ -3,8 +3,8 @@ name: Release
 # Builds the MSI installers on GitHub and publishes them as a GitHub Release.
 #
 # Trigger: push a tag that matches the version in Directory.Build.props, e.g.
-#   git tag v1.3.6
-#   git push origin v1.3.6
+#   git tag v1.4.0
+#   git push origin v1.4.0
 # or run it manually (Actions → Release → Run workflow) to get the MSIs as a
 # workflow artifact without creating a release.
 #

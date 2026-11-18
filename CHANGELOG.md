@@ -3,7 +3,7 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
-## Unreleased
+## 1.4.0
 
 - **Waiting for approval.** Your own activation requests that an approver has not decided yet are
   listed above ACTIVE — for directory roles, PIM for Groups and Azure resource roles, read from
