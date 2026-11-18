@@ -42,7 +42,7 @@
     Version zentral hier pflegen – build\build.ps1 übernimmt sie ins MSI.
   -->
   <PropertyGroup>
-    <Version>1.4.1</Version>
+    <Version>1.4.2</Version>
     <Authors>mistermodernwork</Authors>
     <Company>ModernWork Elevate</Company>
     <Product>ModernWork Elevate</Product>
