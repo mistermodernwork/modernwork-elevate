@@ -2363,33 +2363,38 @@
               </Border>
 
               <!-- =========== UPDATES =========== -->
-              <!-- No self-update (MSI rollout by the organization), so the
-                   card stays hidden. Kept in the markup for a possible future update channel. -->
-              <Border Classes="settings-card" IsVisible="False">
+              <!-- Check only, never self-update: the MSI is per machine and needs an
+                   administrator, organizations roll versions out themselves. Off until the
+                   user turns it on (the check sends the IP address to GitHub); a machine
+                   policy can fix it either way and then locks the switch. -->
+              <Border Classes="settings-card">
               <StackPanel Spacing="8">
                 <TextBlock Classes="section-title" Text="Updates" />
 
                 <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
                   <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                    <TextBlock Text="Automatic updates"
+                    <TextBlock Text="Check for new versions"
                                FontSize="{DynamicResource FontBody}"
                                Foreground="{DynamicResource TextPrimaryBrush}" />
-                    <TextBlock Text="Check GitHub for new releases and offer to install them."
+                    <TextBlock Text="{Binding UpdateCheckCaption}"
                                FontSize="{DynamicResource FontSmall}"
                                Foreground="{DynamicResource TextTertiaryBrush}"
                                TextWrapping="Wrap" />
                   </StackPanel>
                   <ToggleSwitch Grid.Column="1"
-                                IsChecked="{Binding AutomaticUpdatesEnabled}"
+                                IsChecked="{Binding UpdateCheckEnabled}"
+                                IsEnabled="{Binding CanChangeUpdateCheck}"
+                                AutomationProperties.Name="Check for new versions"
                                 OnContent=""
                                 OffContent="" />
                 </Grid>
 
-                <!-- Not tied to the switch above: that one governs unprompted
-                     checking, this is the user asking. The status line carries
-                     the outcome because four different things all end in "no
-                     update to install" and they are not interchangeable. -->
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" VerticalAlignment="Center">
+                <!-- Not tied to the switch above: that one governs unprompted checking,
+                     this is the user asking — a press is consent for that one check. Hidden
+                     when a policy forbids contacting GitHub. The status line carries the
+                     outcome, because "up to date" and "GitHub unreachable" are not the same. -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" VerticalAlignment="Center"
+                      IsVisible="{Binding CanCheckForUpdates}">
                   <StackPanel Grid.Column="0" VerticalAlignment="Center" Spacing="2">
                     <TextBlock Text="Check now"
                                FontSize="{DynamicResource FontBody}"
