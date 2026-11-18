@@ -3,7 +3,7 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
-## Unreleased
+## 1.4.2
 
 - Logs no longer contain sign-in names (UPN) or mail addresses from Graph, Azure Resource Manager or
   sign-in error messages (for example ARM's `AuthorizationFailed`, which names the caller), including
