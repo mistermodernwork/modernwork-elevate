@@ -41,7 +41,7 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     {
         var store = CreateStore();
 
-        var favorites = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var favorites = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
 
         Assert.Empty(favorites);
     }
@@ -50,10 +50,10 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task AddAsync_PersistsAcrossInstances()
     {
         var first = CreateStore();
-        var saved = await first.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "Incident IR-1234");
+        var saved = await first.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "Incident IR-1234", TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        var loaded = Assert.Single(await second.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope));
+        var loaded = Assert.Single(await second.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken));
 
         Assert.Equal(saved.Id, loaded.Id);
         Assert.Equal("Incident IR-1234", loaded.Text);
@@ -64,7 +64,7 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     {
         var store = CreateStore();
 
-        var saved = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "  weekly audit  ");
+        var saved = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "  weekly audit  ", TestContext.Current.CancellationToken);
 
         Assert.Equal("weekly audit", saved.Text);
     }
@@ -73,12 +73,12 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task AddAsync_DuplicateTextForSameRole_ReturnsExistingEntry()
     {
         var store = CreateStore();
-        var first = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "Same text");
+        var first = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "Same text", TestContext.Current.CancellationToken);
 
-        var second = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "Same text");
+        var second = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "Same text", TestContext.Current.CancellationToken);
 
         Assert.Equal(first.Id, second.Id);
-        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
         Assert.Single(loaded);
     }
 
@@ -86,10 +86,10 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task GetForRoleAsync_OnlyReturnsMatchingRole()
     {
         var store = CreateStore();
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "for role A");
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleB, TenantScope, "for role B");
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "for role A", TestContext.Current.CancellationToken);
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleB, TenantScope, "for role B", TestContext.Current.CancellationToken);
 
-        var forA = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var forA = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
 
         var only = Assert.Single(forA);
         Assert.Equal("for role A", only.Text);
@@ -99,10 +99,10 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task GetForRoleAsync_OnlyReturnsMatchingTenant()
     {
         var store = CreateStore();
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "tenant A reasoning");
-        await store.AddAsync(TenantB, PimResourceKind.DirectoryRole, RoleA, TenantScope, "tenant B reasoning");
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "tenant A reasoning", TestContext.Current.CancellationToken);
+        await store.AddAsync(TenantB, PimResourceKind.DirectoryRole, RoleA, TenantScope, "tenant B reasoning", TestContext.Current.CancellationToken);
 
-        var forA = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var forA = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
 
         var only = Assert.Single(forA);
         Assert.Equal("tenant A reasoning", only.Text);
@@ -112,10 +112,10 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task GetForRoleAsync_OnlyReturnsMatchingKind()
     {
         var store = CreateStore();
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "for directory role");
-        await store.AddAsync(TenantA, PimResourceKind.GroupMembership, RoleA, TenantScope, "for group membership");
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "for directory role", TestContext.Current.CancellationToken);
+        await store.AddAsync(TenantA, PimResourceKind.GroupMembership, RoleA, TenantScope, "for group membership", TestContext.Current.CancellationToken);
 
-        var dirRoles = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var dirRoles = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
 
         var only = Assert.Single(dirRoles);
         Assert.Equal("for directory role", only.Text);
@@ -125,11 +125,11 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task GetForRoleAsync_OrdersByCreatedAt()
     {
         var store = CreateStore();
-        var first = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "first");
-        await Task.Delay(15);
-        var second = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "second");
+        var first = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "first", TestContext.Current.CancellationToken);
+        await Task.Delay(15, TestContext.Current.CancellationToken);
+        var second = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "second", TestContext.Current.CancellationToken);
 
-        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
 
         Assert.Collection(
             loaded,
@@ -141,12 +141,12 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task RemoveAsync_DeletesOnlyMatchingEntry()
     {
         var store = CreateStore();
-        var keep = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "keep me");
-        var drop = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "drop me");
+        var keep = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "keep me", TestContext.Current.CancellationToken);
+        var drop = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "drop me", TestContext.Current.CancellationToken);
 
-        await store.RemoveAsync(drop.Id);
+        await store.RemoveAsync(drop.Id, TestContext.Current.CancellationToken);
 
-        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
         var only = Assert.Single(loaded);
         Assert.Equal(keep.Id, only.Id);
     }
@@ -155,21 +155,21 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     public async Task RemoveAsync_NonexistentId_IsNoOp()
     {
         var store = CreateStore();
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "keep");
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "keep", TestContext.Current.CancellationToken);
 
-        await store.RemoveAsync(Guid.NewGuid());
+        await store.RemoveAsync(Guid.NewGuid(), TestContext.Current.CancellationToken);
 
-        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
         Assert.Single(loaded);
     }
 
     [Fact]
     public async Task GetForRoleAsync_CorruptFile_ReturnsEmptyInsteadOfThrowing()
     {
-        await File.WriteAllTextAsync(_filePath, "{not valid json");
+        await File.WriteAllTextAsync(_filePath, "{not valid json", TestContext.Current.CancellationToken);
 
         var store = CreateStore();
-        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope);
+        var loaded = await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken);
 
         Assert.Empty(loaded);
     }
@@ -180,18 +180,18 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
         // The data-loss case: a read that fails used to count as "no favourites", and the
         // write then replaced every saved one with just the new entry.
         var store = CreateStore();
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-1");
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleB, TenantScope, "INC-2");
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-1", TestContext.Current.CancellationToken);
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleB, TenantScope, "INC-2", TestContext.Current.CancellationToken);
 
         using (LockedFile.Hold(_filePath))
         {
             await Assert.ThrowsAnyAsync<IOException>(
-                () => store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-3"));
+                () => store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-3", TestContext.Current.CancellationToken));
             Assert.False(File.Exists(_filePath + ".tmp"));
         }
 
-        Assert.Single(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope));
-        Assert.Single(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleB, TenantScope));
+        Assert.Single(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken));
+        Assert.Single(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleB, TenantScope, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -199,25 +199,25 @@ public sealed class JustificationFavoritesStoreTests : IDisposable
     {
         // Silently "removing" nothing let the chip vanish and come back on the next open.
         var store = CreateStore();
-        var saved = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-1");
+        var saved = await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-1", TestContext.Current.CancellationToken);
 
         using (LockedFile.Hold(_filePath))
         {
-            await Assert.ThrowsAnyAsync<IOException>(() => store.RemoveAsync(saved.Id));
+            await Assert.ThrowsAnyAsync<IOException>(() => store.RemoveAsync(saved.Id, TestContext.Current.CancellationToken));
         }
 
-        Assert.Single(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope));
+        Assert.Single(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken));
     }
 
     [Fact]
     public async Task GetForRoleAsync_WhileFileIsLocked_ReturnsEmpty()
     {
         var store = CreateStore();
-        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-1");
+        await store.AddAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, "INC-1", TestContext.Current.CancellationToken);
 
         using (LockedFile.Hold(_filePath))
         {
-            Assert.Empty(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope));
+            Assert.Empty(await store.GetForRoleAsync(TenantA, PimResourceKind.DirectoryRole, RoleA, TenantScope, TestContext.Current.CancellationToken));
         }
     }
 

@@ -5,10 +5,10 @@
     Enforces the ModernWorkElevate.Core line-coverage gate.
 
 .DESCRIPTION
-    Reads the Cobertura coverage report produced by `dotnet test --collect:"XPlat
-    Code Coverage"` and fails (exit 1) when the line coverage is below the gate.
-    The coverlet.runsettings file restricts measurement to [ModernWorkElevate.Core]*, so
-    the report's overall line-rate is the Core line-rate.
+    Reads the Cobertura coverage report produced by `dotnet test --coverlet` (coverlet.MTP)
+    and fails (exit 1) when the line coverage is below the gate.
+    src/ModernWorkElevate.Tests/testconfig.json restricts measurement to
+    [ModernWorkElevate.Core]*, so the report's overall line-rate is the Core line-rate.
 
 .PARAMETER MinimumLineRate
     Required line-coverage fraction (0..1). Defaults to 0.70 per the build plan.
@@ -23,12 +23,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$report = Get-ChildItem -Path $ResultsDirectory -Recurse -Filter "coverage.cobertura.xml" `
+$report = Get-ChildItem -Path $ResultsDirectory -Recurse -Filter "*coverage.cobertura*.xml" `
     | Sort-Object LastWriteTime -Descending `
     | Select-Object -First 1
 
 if (-not $report) {
-    Write-Error "No coverage.cobertura.xml found under $ResultsDirectory."
+    Write-Error "No Cobertura coverage report found under $ResultsDirectory."
     exit 1
 }
 

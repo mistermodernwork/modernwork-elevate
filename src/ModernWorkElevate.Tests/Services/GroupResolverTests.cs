@@ -12,7 +12,7 @@ public sealed class GroupResolverTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("groups-batch.json")));
         var resolver = new GroupResolver(GraphClientTestBuilder.Build(handler));
 
-        var result = await resolver.ResolveAsync(["group-1", "group-2", "group-1"]);
+        var result = await resolver.ResolveAsync(["group-1", "group-2", "group-1"], TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
         Assert.True(result["group-1"].IsAssignableToRole);
@@ -26,7 +26,7 @@ public sealed class GroupResolverTests
         var handler = new FakeHttpMessageHandler(FakeHttpMessageHandler.JsonResponse("{}"));
         var resolver = new GroupResolver(GraphClientTestBuilder.Build(handler));
 
-        var result = await resolver.ResolveAsync([]);
+        var result = await resolver.ResolveAsync([], TestContext.Current.CancellationToken);
 
         Assert.Empty(result);
         Assert.Equal(0, handler.RequestCount);

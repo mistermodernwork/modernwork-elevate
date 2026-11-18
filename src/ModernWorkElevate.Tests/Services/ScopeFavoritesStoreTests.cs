@@ -41,7 +41,7 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     {
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(store.Current);
     }
@@ -50,10 +50,10 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     public async Task AddAsync_PersistsAcrossInstancesWithItsScopes()
     {
         var favorite = Favorite("Project X");
-        await CreateStore().AddAsync(favorite);
+        await CreateStore().AddAsync(favorite, TestContext.Current.CancellationToken);
 
         var reloaded = CreateStore();
-        await reloaded.LoadAsync();
+        await reloaded.LoadAsync(TestContext.Current.CancellationToken);
 
         var stored = Assert.Single(reloaded.Current);
         Assert.Equal(favorite.Id, stored.Id);
@@ -72,10 +72,10 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
         var newer = Favorite("second");
         var otherAccount = Favorite("theirs") with { ObjectId = OidB };
         var otherRole = Favorite("other role") with { ResourceId = OwnerId + "-x" };
-        await store.AddAsync(newer);
-        await store.AddAsync(older);
-        await store.AddAsync(otherAccount);
-        await store.AddAsync(otherRole);
+        await store.AddAsync(newer, TestContext.Current.CancellationToken);
+        await store.AddAsync(older, TestContext.Current.CancellationToken);
+        await store.AddAsync(otherAccount, TestContext.Current.CancellationToken);
+        await store.AddAsync(otherRole, TestContext.Current.CancellationToken);
 
         var mine = store.ForRole(OidA, TenantA, OwnerId, RootScope).ToList();
 
@@ -87,17 +87,17 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     {
         var store = CreateStore();
         var favorite = Favorite("Project X");
-        await store.AddAsync(favorite);
+        await store.AddAsync(favorite, TestContext.Current.CancellationToken);
         var announcements = 0;
         store.Changed += () => announcements++;
 
-        await store.SetPinnedAsync(favorite.Id, isPinned: false);
+        await store.SetPinnedAsync(favorite.Id, isPinned: false, ct: TestContext.Current.CancellationToken);
 
         Assert.False(Assert.Single(store.Current).IsPinned);
         Assert.Equal(1, announcements);
 
         var reloaded = CreateStore();
-        await reloaded.LoadAsync();
+        await reloaded.LoadAsync(TestContext.Current.CancellationToken);
         Assert.False(Assert.Single(reloaded.Current).IsPinned);
     }
 
@@ -106,12 +106,12 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     {
         var store = CreateStore();
         var favorite = Favorite("Project X");
-        await store.AddAsync(favorite);
+        await store.AddAsync(favorite, TestContext.Current.CancellationToken);
 
-        await store.RemoveAsync(Guid.NewGuid());
+        await store.RemoveAsync(Guid.NewGuid(), TestContext.Current.CancellationToken);
         Assert.Single(store.Current);
 
-        await store.RemoveAsync(favorite.Id);
+        await store.RemoveAsync(favorite.Id, TestContext.Current.CancellationToken);
         Assert.Empty(store.Current);
     }
 
@@ -120,10 +120,10 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     {
         // The whole point of the separate file: a favourite nobody can read costs the
         // favourites and nothing else — settings.json is not even opened.
-        await File.WriteAllTextAsync(_filePath, "{ not json");
+        await File.WriteAllTextAsync(_filePath, "{ not json", TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(store.Current);
     }
@@ -137,10 +137,10 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
         const string Json =
             """[{"Id":"11111111-1111-1111-1111-111111111111","TenantId":"t","ResourceId":"r","ScopeId":"s","Scopes":null,"CreatedAt":"2026-01-01T00:00:00+00:00"}]""";
 
-        await File.WriteAllTextAsync(_filePath, Json);
+        await File.WriteAllTextAsync(_filePath, Json, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(store.Current);
     }
@@ -148,7 +148,7 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     [Fact]
     public async Task AddAsync_LeavesNoTempFileBehind()
     {
-        await CreateStore().AddAsync(Favorite("Project X"));
+        await CreateStore().AddAsync(Favorite("Project X"), TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(_filePath));
         Assert.False(File.Exists(_filePath + ".tmp"));
@@ -160,22 +160,22 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
         // The startup read is the only read the store used to make, and every later save
         // built on it: a lock at logon turned the first save of the day into a wipe.
         var seed = CreateStore();
-        await seed.AddAsync(Favorite("Project X"));
-        await seed.AddAsync(Favorite("Project Y"));
+        await seed.AddAsync(Favorite("Project X"), TestContext.Current.CancellationToken);
+        await seed.AddAsync(Favorite("Project Y"), TestContext.Current.CancellationToken);
 
         var store = CreateStore();
         using (LockedFile.Hold(_filePath))
         {
-            await store.LoadAsync();
+            await store.LoadAsync(TestContext.Current.CancellationToken);
         }
 
         Assert.Empty(store.Current);
 
-        await store.AddAsync(Favorite("Project Z"));
+        await store.AddAsync(Favorite("Project Z"), TestContext.Current.CancellationToken);
 
         Assert.Equal(3, store.Current.Count);
         var fresh = CreateStore();
-        await fresh.LoadAsync();
+        await fresh.LoadAsync(TestContext.Current.CancellationToken);
         Assert.Equal(3, fresh.Current.Count);
     }
 
@@ -183,21 +183,21 @@ public sealed class ScopeFavoritesStoreTests : IDisposable
     public async Task AddAsync_WhileFileIsLocked_ThrowsAndKeepsTheFile()
     {
         var store = CreateStore();
-        await store.AddAsync(Favorite("Project X"));
-        await store.AddAsync(Favorite("Project Y"));
+        await store.AddAsync(Favorite("Project X"), TestContext.Current.CancellationToken);
+        await store.AddAsync(Favorite("Project Y"), TestContext.Current.CancellationToken);
         var raised = false;
         store.Changed += () => raised = true;
 
         using (LockedFile.Hold(_filePath))
         {
-            await Assert.ThrowsAnyAsync<IOException>(() => store.AddAsync(Favorite("Project Z")));
+            await Assert.ThrowsAnyAsync<IOException>(() => store.AddAsync(Favorite("Project Z"), TestContext.Current.CancellationToken));
             Assert.False(File.Exists(_filePath + ".tmp"));
         }
 
         Assert.False(raised);
         Assert.Equal(2, store.Current.Count);
         var fresh = CreateStore();
-        await fresh.LoadAsync();
+        await fresh.LoadAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, fresh.Current.Count);
     }
 

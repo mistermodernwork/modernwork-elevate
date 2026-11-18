@@ -5,6 +5,12 @@ entry also ships inside the app as its "what's new" text (`packaging/release-not
 
 ## Unreleased
 
+- Tests moved from xunit 2.9.3 to xunit v3 (`xunit.v3` 4.0.3) on Microsoft.Testing.Platform:
+  `dotnet test` runs in the .NET 10 SDK's MTP mode (`global.json` → `test.runner`), coverage comes
+  from `coverlet.MTP` 10.1.1 with its settings in `src/ModernWorkElevate.Tests/testconfig.json`
+  (replaces `coverlet.runsettings`). `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` and
+  `coverlet.collector` are no longer needed. Tests pass `TestContext.Current.CancellationToken`
+  to async calls (xunit analyzer xUnit1051). No change to the app.
 - Dependencies: Microsoft.Extensions.* 10.0.15 (.NET 10 servicing), Microsoft.Graph 5.105.0 (pulls
   Microsoft.IdentityModel 8.x instead of the deprecated 7.6), System.Drawing.Common 4.7.3,
   Serilog.Sinks.Console 6.1.1; test tooling updated.
