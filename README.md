@@ -70,9 +70,16 @@ Prefer the portal? [docs/app-registration-setup.md](docs/app-registration-setup.
 msiexec /i ModernWorkElevate-<version>-x64.msi /qn /norestart
 ```
 
-> The release MSIs are **not code-signed** — fine for a pilot, but SmartScreen warns and
+> The release MSIs are **not code-signed** yet — fine for a pilot, but SmartScreen warns and
 > WDAC/AppLocker environments block them. For production, build and sign it with your own
 > certificate in one command: [docs/deployment.md](docs/deployment.md#3-build-and-sign).
+>
+> **Download blocked by SmartScreen?** It blocks unsigned files that few people have downloaded yet.
+> Compare the file with `SHA256SUMS.txt` from the same release first, then: in Edge's downloads
+> **…** → **Keep** → **Show more** → **Keep anyway**; when Windows says *"Windows protected your
+> PC"*, **More info** → **Run anyway**. Or clear the download mark in PowerShell with
+> `Unblock-File .\ModernWorkElevate-<version>-x64.msi`. Rolled out through Intune or Configuration
+> Manager, the MSI never meets SmartScreen.
 
 **3. Tell it your tenant** — pick one:
 

@@ -26,6 +26,15 @@ msiexec /i ModernWorkElevate-<Version>-x64.msi /qn /norestart /l*v "%TEMP%\Moder
 Installiert wird nach `C:\Program Files\ModernWork Elevate` mit Startmenü-Verknüpfung für alle Benutzer.
 Laufende Instanzen werden bei Upgrade und Deinstallation beendet.
 
+**Download von SmartScreen blockiert?** Das Release-MSI ist noch nicht code-signiert und hat wenig
+Download-Reputation. Zuerst gegen `SHA256SUMS.txt` aus demselben Release prüfen (`Get-FileHash`), dann
+in Edge unter Downloads **…** → **Behalten** → **Mehr anzeigen** → **Trotzdem behalten**; meldet
+Windows „Der Computer wurde durch Windows geschützt“, **Weitere Informationen** → **Trotzdem
+ausführen**. Alternativ die Download-Markierung mit `Unblock-File` entfernen. Über Intune oder
+Configuration Manager verteilt, läuft das MSI nicht durch SmartScreen. Dauerhafte Lösung: signieren
+(eigenes Zertifikat oder signierte Releases über
+[Azure Artifact Signing](code-signing-wdac.de.md#signierte-releases-auf-github-azure-artifact-signing)).
+
 **Upgrade:** das neuere MSI genauso installieren (Major Upgrade). Benutzereinstellungen und Anmeldungen bleiben.
 **Downgrade** wird verhindert.
 

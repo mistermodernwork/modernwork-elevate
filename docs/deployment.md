@@ -258,6 +258,7 @@ No service, no scheduled task, no tokens or passwords on disk.
 | --- | --- |
 | MSI: "requires Windows 11 version 25H2" | Device below build 26200. |
 | MSI: "requires the .NET Runtime 10" | Deploy the runtime first or set `SKIPRUNTIMECHECK=1` with a dependency. |
+| Browser or Windows blocks the downloaded MSI (SmartScreen) | The release MSI is not code-signed yet and has little download reputation. Check it against `SHA256SUMS.txt` (`Get-FileHash`), then Edge **…** → **Keep** → **Show more** → **Keep anyway**, or `Unblock-File` it. Software distribution (Intune, Configuration Manager) does not go through SmartScreen. Lasting fix: sign the MSI (section 3, or signed releases via [Azure Artifact Signing](code-signing-wdac.md#signed-releases-on-github-azure-artifact-signing)). |
 | App exits immediately, exit code `3` | Windows below build 26200. |
 | Consent dialog at sign-in | A requested Graph permission is not admin-consented in that tenant — compare the list in section 2 with *Enterprise applications → (app) → Permissions*. A broader permission (e.g. `RoleManagement.ReadWrite.Directory`) does not satisfy a request for a narrower one. |
 | "Couldn't load eligibilities for this tenant" | See the log (`%LOCALAPPDATA%\ModernWorkElevate\logs`); the first line shows the running version. |
