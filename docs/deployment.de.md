@@ -21,7 +21,7 @@ msiexec /i ModernWorkElevate-<Version>-x64.msi /qn /norestart /l*v "%TEMP%\Moder
 | Eigenschaft | Wirkung |
 | --- | --- |
 | `AUTOSTART=1` | Autostart für alle Benutzer (`HKLM\...\Run`). Ohne: Die App schaltet beim ersten Start pro Benutzer den HKCU-Autostart ein, abschaltbar im Tray-Menü. Wird bei Upgrades übernommen. |
-| `SKIPRUNTIMECHECK=1` | Prüfung auf .NET Runtime 10 überspringen. |
+| `SKIPRUNTIMECHECK=1` | Prüfung auf .NET Runtime 10 überspringen – nur nötig, wenn die Runtime erst später im selben Rollout kommt. Ein installiertes .NET 10 wird erkannt. Vor 1.4.0 erkannte die Prüfung nie eine installierte Runtime, deshalb stand die Eigenschaft überall im Installationsbefehl; ab 1.4.0 kann sie entfallen. |
 
 Installiert wird nach `C:\Program Files\ModernWork Elevate` mit Startmenü-Verknüpfung für alle Benutzer.
 Laufende Instanzen werden bei Upgrade und Deinstallation beendet.

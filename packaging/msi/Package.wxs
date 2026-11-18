@@ -9,7 +9,8 @@
     AUTOSTART=1          Autostart für alle Benutzer (HKLM\...\Run). Ohne diese Eigenschaft schaltet
                          die App beim ersten Start pro Benutzer den Autostart in HKCU ein; der
                          Benutzer kann ihn im Tray-Menü abschalten.
-    SKIPRUNTIMECHECK=1   Prüfung auf .NET Runtime ≥ 10 überspringen (z. B. Tasksequenz, Runtime folgt).
+    SKIPRUNTIMECHECK=1   Prüfung auf .NET ≥ 10 überspringen – nur nötig, wenn die Runtime erst danach
+                         kommt (z. B. Tasksequenz). Ist .NET 10 installiert, wird es erkannt.
 
   Voraussetzung: Windows 11 25H2 (Build 26200) oder neuer – Launch Condition, nicht überspringbar.
   Konfiguration (Tenants, Device Code, Token-Cache) gehört in die Richtlinie
@@ -58,10 +59,16 @@
       <RegistrySearch Id="WindowsBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64" />
     </Property>
 
-    <!-- .NET Runtime 10 oder neuer (Avalonia braucht keine Windows Desktop Runtime). -->
+    <!-- .NET 10 oder neuer (Avalonia braucht keine Windows Desktop Runtime), erkannt an
+         dotnet.exe: Jede .NET-10-Runtime und jedes .NET-10-SDK bringt diesen Host mindestens
+         in Version 10 mit, und er liegt immer direkt in ...\dotnet.
+         Nicht mehr über System.Private.CoreLib.dll in shared\Microsoft.NETCore.App\<Version>:
+         WiX schreibt Depth nur in die Verzeichnis-, nie in die Dateizeile von DrLocator, der
+         Windows Installer sucht die Datei also nie im Versionsordner – die Prüfung schlug auf
+         jedem Rechner fehl, und SKIPRUNTIMECHECK=1 war immer nötig (geprüft 2026-11-18 per AppSearch). -->
     <Property Id="NETRUNTIME">
-      <DirectorySearch Id="NetRuntimeRoot" Path="[ProgramFiles64Folder]dotnet\shared\Microsoft.NETCore.App" Depth="1">
-        <FileSearch Id="NetRuntimeCoreLib" Name="System.Private.CoreLib.dll" MinVersion="10.0.0.0" />
+      <DirectorySearch Id="DotnetRoot" Path="[ProgramFiles64Folder]dotnet">
+        <FileSearch Id="DotnetHost" Name="dotnet.exe" MinVersion="10.0.0.0" />
       </DirectorySearch>
     </Property>
 

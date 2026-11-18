@@ -86,7 +86,7 @@ msiexec /i ModernWorkElevate-<version>-x64.msi /qn /norestart /l*v "%TEMP%\Moder
 | Property | Effect |
 | --- | --- |
 | `AUTOSTART=1` | Autostart for every user (`HKLM\...\Run`). Without it, the app enables a per-user autostart (`HKCU\...\Run`) on its first start for each user; users can switch it off in the tray menu. Remembered across upgrades. |
-| `SKIPRUNTIMECHECK=1` | Skip the .NET Runtime check (e.g. runtime deployed later in the same task sequence). |
+| `SKIPRUNTIMECHECK=1` | Skip the .NET Runtime check — only when the runtime is deployed later in the same task sequence. An installed .NET 10 is detected. Before 1.4.0 the check never recognised an installed runtime, so install commands carried this property everywhere; from 1.4.0 on it can be removed. |
 
 The MSI installs to `C:\Program Files\ModernWork Elevate` with an all-users Start-menu shortcut and
 closes running instances on upgrade and uninstall.
