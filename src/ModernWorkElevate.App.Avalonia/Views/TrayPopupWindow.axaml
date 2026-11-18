@@ -700,6 +700,79 @@
                    RenderOptions.BitmapInterpolationMode="HighQuality" />
           </Grid>
 
+          <!-- ===== WAITING FOR APPROVAL — the user's own requests an approver has not
+               decided yet. Above ACTIVE, because it is what someone waiting is looking
+               for; once approved the row leaves here and the role appears below. ===== -->
+          <Border Classes="section"
+                  IsVisible="{Binding PendingApprovalCount}">
+            <StackPanel Spacing="6">
+              <TextBlock Classes="section-title" Text="Waiting for approval"
+                         Margin="2,0,0,2" />
+
+              <ItemsControl ItemsSource="{Binding PendingApprovals}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate DataType="vm:PendingApprovalItemViewModel">
+                    <Border Classes="active" Margin="0,0,0,6"
+                            AutomationProperties.Name="{Binding AccessibleName}">
+                      <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+
+                        <!-- Clock instead of the live dot: nothing is granted yet. -->
+                        <TextBlock Grid.Column="0"
+                                   Classes="glyph"
+                                   Text="&#xE823;"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource WarningBrush}" />
+
+                        <!-- Same lines as an active row, so the role reads the same
+                             before and after the approval. -->
+                        <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                          <TextBlock Text="{Binding DisplayName}"
+                                     FontSize="{DynamicResource FontBody}"
+                                     FontWeight="SemiBold"
+                                     Foreground="{DynamicResource TextPrimaryBrush}"
+                                     TextTrimming="CharacterEllipsis" />
+                          <TextBlock Text="{Binding UserLine}"
+                                     FontSize="{DynamicResource FontSmall}"
+                                     Foreground="{DynamicResource TextSecondaryBrush}"
+                                     TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding TenantLine}"
+                                     FontSize="{DynamicResource FontSmall}"
+                                     Foreground="{DynamicResource TextTertiaryBrush}"
+                                     TextWrapping="Wrap"
+                                     ToolTip.Tip="{Binding TenantTooltip}" />
+                          <TextBlock Text="{Binding TypeLine}"
+                                     FontSize="{DynamicResource FontSmall}"
+                                     Foreground="{DynamicResource TextTertiaryBrush}"
+                                     TextWrapping="Wrap"
+                                     IsVisible="{Binding ShowType}" />
+                          <TextBlock Text="{Binding ScopeLine}"
+                                     FontSize="{DynamicResource FontSmall}"
+                                     Foreground="{DynamicResource TextTertiaryBrush}"
+                                     TextWrapping="Wrap"
+                                     IsVisible="{Binding HasScope}"
+                                     ToolTip.Tip="{Binding ScopeTooltip}" />
+                          <TextBlock Text="{Binding RequestedLine}"
+                                     FontSize="{DynamicResource FontSmall}"
+                                     Foreground="{DynamicResource TextTertiaryBrush}"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Column="2"
+                                   Text="Waiting"
+                                   FontSize="{DynamicResource FontSmall}"
+                                   FontWeight="SemiBold"
+                                   Margin="10,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource WarningBrush}" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
           <!-- ===== ACTIVE — only visible when there are active assignments ===== -->
           <Border Classes="section"
                   IsVisible="{Binding ActiveCount}">

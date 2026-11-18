@@ -19,6 +19,10 @@ public sealed class ActivationStatusParserTests
     [InlineData("PendingProvisioning", ActivationStatus.PendingScheduleCreation)]
     [InlineData("ProvisioningStarted", ActivationStatus.PendingScheduleCreation)]
     [InlineData("ScheduleCreated", ActivationStatus.PendingScheduleCreation)]
+    [InlineData("Canceled", ActivationStatus.Canceled)]
+    [InlineData("TimedOut", ActivationStatus.TimedOut)]
+    [InlineData("AdminDenied", ActivationStatus.Denied)]
+    [InlineData("AdminApproved", ActivationStatus.Granted)]
     public void Parse_KnownStatus_ReturnsMatchingEnum(string status, ActivationStatus expected) =>
         Assert.Equal(expected, ActivationStatusParser.Parse(status));
 
