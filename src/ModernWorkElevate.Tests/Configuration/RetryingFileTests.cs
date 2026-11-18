@@ -19,11 +19,13 @@ public sealed class RetryingFileTests : IDisposable
     public async Task OpenReadAsync_WhenTheLockEndsInTime_Succeeds()
     {
         var held = LockedFile.Hold(_filePath);
-        var release = Task.Run(async () =>
-        {
-            await Task.Delay(30);
-            await held.DisposeAsync();
-        });
+        var release = Task.Run(
+            async () =>
+            {
+                await Task.Delay(30);
+                await held.DisposeAsync();
+            },
+            TestContext.Current.CancellationToken);
 
         await using (var stream = await RetryingFile.OpenReadAsync(_filePath, CancellationToken.None))
         {

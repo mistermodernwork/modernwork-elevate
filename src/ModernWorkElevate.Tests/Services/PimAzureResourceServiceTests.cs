@@ -23,7 +23,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-eligibilities.json")));
         var service = Build(handler);
 
-        var result = await service.GetEligibleAzureRolesAsync();
+        var result = await service.GetEligibleAzureRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(
             "https://management.azure.com/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()",
@@ -61,7 +61,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-eligibilities-page2.json")));
         var service = Build(handler);
 
-        var result = await service.GetEligibleAzureRolesAsync();
+        var result = await service.GetEligibleAzureRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(3, result.Count);
         Assert.Equal(2, handler.RequestCount);
@@ -76,7 +76,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-active-assignments.json")));
         var service = Build(handler);
 
-        var result = await service.GetActiveAzureRolesAsync();
+        var result = await service.GetActiveAzureRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains("roleAssignmentScheduleInstances?api-version=2020-10-01&$filter=asTarget()", handler.Requests[0].RequestUri!.ToString(), StringComparison.Ordinal);
         var assignment = Assert.Single(result);
@@ -99,7 +99,7 @@ public sealed class PimAzureResourceServiceTests
         var request = new ActivationRequest(
             SampleEligibility(), TimeSpan.FromHours(2), "Fixing a locked account", new TicketInfo("INC-555", "ServiceNow"));
 
-        var result = await service.ActivateAsync(request);
+        var result = await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(ActivationStatus.Provisioned, result.Status);
@@ -148,7 +148,7 @@ public sealed class PimAzureResourceServiceTests
             null,
             TargetScope: new EligibleChildScope("/subscriptions/sub-prod", "lz-prod", "subscription"));
 
-        var result = await service.ActivateAsync(request);
+        var result = await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         var sent = handler.Requests[0];
@@ -175,7 +175,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(LandingZoneChildren));
         var service = Build(handler);
 
-        var result = await service.GetEligibleChildScopesAsync(RootManagementGroup);
+        var result = await service.GetEligibleChildScopesAsync(RootManagementGroup, TestContext.Current.CancellationToken);
 
         // ARM answers with direct children only, so every management group it returns
         // is read in turn — unfiltered, the type check is client-side.
@@ -224,7 +224,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-error-authorization-failed.json"), HttpStatusCode.Forbidden));
         var service = Build(handler);
 
-        var error = await Assert.ThrowsAsync<ArmRequestException>(() => service.GetEligibleChildScopesAsync(RootManagementGroup));
+        var error = await Assert.ThrowsAsync<ArmRequestException>(() => service.GetEligibleChildScopesAsync(RootManagementGroup, TestContext.Current.CancellationToken));
 
         Assert.Equal("AuthorizationFailed", error.Code);
     }
@@ -236,7 +236,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-activation-pending-provisioning.json"), HttpStatusCode.Created));
         var service = Build(handler);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         // ARM accepted the request but has not provisioned it yet — the UI
         // treats it like a pending schedule creation and refreshes.
@@ -252,7 +252,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-activation-provisioned.json"), HttpStatusCode.Created));
         var service = Build(handler);
 
-        await service.ActivateAsync(SampleRequest() with { AuthContextClaim = "c1" });
+        await service.ActivateAsync(SampleRequest() with { AuthContextClaim = "c1" }, TestContext.Current.CancellationToken);
 
         Assert.True(handler.Requests[0].Options.TryGetValue(ArmBearerTokenHandler.ClaimsOption, out var claims));
         Assert.Contains("\"acrs\"", claims, StringComparison.Ordinal);
@@ -266,7 +266,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-activation-provisioned.json"), HttpStatusCode.Created));
         var service = Build(handler);
 
-        await service.ActivateAsync(SampleRequest());
+        await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(handler.Requests[0].Options.TryGetValue(ArmBearerTokenHandler.ClaimsOption, out _));
     }
@@ -280,7 +280,7 @@ public sealed class PimAzureResourceServiceTests
         var service = Build(handler);
 
         await Assert.ThrowsAsync<NotSupportedException>(
-            () => service.ActivateAsync(SampleRequest() with { IsValidationOnly = true }));
+            () => service.ActivateAsync(SampleRequest() with { IsValidationOnly = true }, TestContext.Current.CancellationToken));
 
         Assert.Equal(0, handler.RequestCount);
     }
@@ -292,7 +292,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-error-policy-mfa.json"), HttpStatusCode.BadRequest));
         var service = Build(handler);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(ActivationStatus.Failed, result.Status);
@@ -309,7 +309,7 @@ public sealed class PimAzureResourceServiceTests
         });
         var service = Build(handler);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.NotNull(result.Error);
@@ -323,7 +323,7 @@ public sealed class PimAzureResourceServiceTests
         var eligibility = new PimEligibility(PimResourceKind.DirectoryRole, "Global Administrator", "role-def-ga", "/", UserOid, null, false);
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => service.ActivateAsync(new ActivationRequest(eligibility, TimeSpan.FromHours(1), null, null)));
+            () => service.ActivateAsync(new ActivationRequest(eligibility, TimeSpan.FromHours(1), null, null), TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -335,7 +335,7 @@ public sealed class PimAzureResourceServiceTests
         var assignment = new ActiveAssignment(
             PimResourceKind.AzureResourceRole, "Reader", ContributorId, "/subscriptions/sub-1/resourceGroups/rg-prod", UserOid, null, null, "arm-assign-1");
 
-        var result = await service.DeactivateAsync(assignment);
+        var result = await service.DeactivateAsync(assignment, TestContext.Current.CancellationToken);
 
         Assert.Null(result.Error);
         var sent = handler.Requests[0];
@@ -358,7 +358,7 @@ public sealed class PimAzureResourceServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("arm-policy-full.json")));
         var service = Build(handler);
 
-        var policy = await service.GetPolicyAsync("/subscriptions/sub-1", ContributorId);
+        var policy = await service.GetPolicyAsync("/subscriptions/sub-1", ContributorId, TestContext.Current.CancellationToken);
 
         var query = Uri.UnescapeDataString(handler.Requests[0].RequestUri!.Query);
         Assert.Contains("/subscriptions/sub-1/providers/Microsoft.Authorization/roleManagementPolicyAssignments", handler.Requests[0].RequestUri!.AbsolutePath, StringComparison.Ordinal);
@@ -389,7 +389,7 @@ public sealed class PimAzureResourceServiceTests
             """;
         var service = Build(new FakeHttpMessageHandler(FakeHttpMessageHandler.JsonResponse(Json)));
 
-        var policy = await service.GetPolicyAsync("/subscriptions/sub-1", ContributorId);
+        var policy = await service.GetPolicyAsync("/subscriptions/sub-1", ContributorId, TestContext.Current.CancellationToken);
 
         Assert.True(policy.AuthContextKnown);
         Assert.False(policy.RequiresAuthContext);
@@ -402,7 +402,7 @@ public sealed class PimAzureResourceServiceTests
         var handler = new FakeHttpMessageHandler(FakeHttpMessageHandler.JsonResponse("""{"value":[]}"""));
         var service = Build(handler);
 
-        var policy = await service.GetPolicyAsync("/subscriptions/sub-1", ContributorId);
+        var policy = await service.GetPolicyAsync("/subscriptions/sub-1", ContributorId, TestContext.Current.CancellationToken);
 
         Assert.Equal(TimeSpan.FromHours(8), policy.MaximumDuration);
         Assert.True(policy.RequiresJustification);
@@ -419,7 +419,7 @@ public sealed class PimAzureResourceServiceTests
         var service = Build(handler);
 
         var error = await Assert.ThrowsAsync<ArmRequestException>(
-            () => service.GetPolicyAsync("/subscriptions/sub-1", ContributorId));
+            () => service.GetPolicyAsync("/subscriptions/sub-1", ContributorId, TestContext.Current.CancellationToken));
 
         Assert.Equal(403, error.StatusCode);
         Assert.Equal("AuthorizationFailed", error.Code);
@@ -436,7 +436,7 @@ public sealed class PimAzureResourceServiceTests
         var request = new ActivationRequest(
             SampleEligibility(), TimeSpan.FromHours(1), "Fixing a locked account", new TicketInfo("INC-555", null));
 
-        var result = await service.ActivateAsync(request);
+        var result = await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         var body = handler.RequestBodies[0];

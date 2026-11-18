@@ -18,4 +18,13 @@ public interface IPimRoleService
 
     /// <summary>Submits a self-deactivation request for an active directory-role assignment.</summary>
     Task<ActivationResult> DeactivateAsync(ActiveAssignment assignment, CancellationToken ct = default);
+
+    /// <summary>Lists the user's own activation requests that are waiting for an approver.</summary>
+    Task<IReadOnlyList<PendingApprovalRequest>> GetPendingApprovalsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads the status of one of the user's own requests, or <c>null</c> when it cannot
+    /// be found (or the id is not a GUID).
+    /// </summary>
+    Task<ActivationStatus?> GetRequestStatusAsync(string requestId, CancellationToken ct = default);
 }

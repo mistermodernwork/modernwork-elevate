@@ -32,6 +32,17 @@ public sealed class PimRoleService : IPimRoleService
     /// <summary>The expansion sets tried in order; a refusal moves on to the next one.</summary>
     private static readonly string[][] ExpansionLevels = [WithScope, WithoutScope, WithoutExpansion];
 
+    /// <summary>
+    /// Requests a user files for themselves. Anything else awaiting approval for this
+    /// principal — an administrator's assignment — is not something they asked for.
+    /// </summary>
+    private static readonly UnifiedRoleScheduleRequestActions[] SelfActions =
+    [
+        UnifiedRoleScheduleRequestActions.SelfActivate,
+        UnifiedRoleScheduleRequestActions.SelfExtend,
+        UnifiedRoleScheduleRequestActions.SelfRenew,
+    ];
+
     private readonly GraphServiceClient _graph;
     private readonly ILogger<PimRoleService> _logger;
 
@@ -155,6 +166,59 @@ public sealed class PimRoleService : IPimRoleService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PendingApprovalRequest>> GetPendingApprovalsAsync(CancellationToken ct = default)
+    {
+        List<UnifiedRoleAssignmentScheduleRequest> requests;
+        try
+        {
+            requests = await ReadPendingRequestsAsync(WithoutScope, ct).ConfigureAwait(false);
+        }
+        catch (ODataError error) when (IsExpansionRefusal(error))
+        {
+            // Not through ReadWithScopeAsync: its step-down is shared with the eligibility
+            // and active reads, and a refusal here must not cost those their role names.
+            // Without the name the row still says what is pending, as "(unknown role)".
+            requests = await ReadPendingRequestsAsync(WithoutExpansion, ct).ConfigureAwait(false);
+        }
+
+        return requests
+            .Where(request => request.Action is { } action && SelfActions.Contains(action))
+            .Select(ToPendingApproval)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<ActivationStatus?> GetRequestStatusAsync(string requestId, CancellationToken ct = default)
+    {
+        // The id goes into an OData filter: only a GUID gets there.
+        if (!Guid.TryParse(requestId, out var id))
+        {
+            return null;
+        }
+
+        var response = await _graph.RoleManagement.Directory.RoleAssignmentScheduleRequests
+            .FilterByCurrentUserWithOn("principal")
+            .GetAsFilterByCurrentUserWithOnGetResponseAsync(
+                requestConfiguration => requestConfiguration.QueryParameters.Filter = $"id eq '{id}'",
+                ct)
+            .ConfigureAwait(false);
+
+        return response?.Value?.FirstOrDefault() is { } request
+            ? ActivationStatusParser.Parse(request.Status)
+            : null;
+    }
+
+    private static PendingApprovalRequest ToPendingApproval(UnifiedRoleAssignmentScheduleRequest request) => new(
+        Kind: PimResourceKind.DirectoryRole,
+        DisplayName: request.RoleDefinition?.DisplayName ?? UnknownRoleName,
+        ResourceId: request.RoleDefinitionId ?? string.Empty,
+        ScopeId: request.DirectoryScopeId ?? "/",
+        RequestId: request.Id ?? string.Empty,
+        RequestedAt: request.CreatedDateTime,
+        RequestedDuration: request.ScheduleInfo?.Expiration?.Duration,
+        ScopeLabel: ScopeLabelOf(request.DirectoryScopeId, null));
+
     private static PimEligibility ToEligibility(UnifiedRoleEligibilityScheduleInstance instance) => new(
         Kind: PimResourceKind.DirectoryRole,
         DisplayName: instance.RoleDefinition?.DisplayName ?? UnknownRoleName,
@@ -235,6 +299,24 @@ public sealed class PimRoleService : IPimRoleService
                 _expansionLevel = level + 1;
             }
         }
+    }
+
+    private async Task<List<UnifiedRoleAssignmentScheduleRequest>> ReadPendingRequestsAsync(
+        string[] expand,
+        CancellationToken ct)
+    {
+        var response = await _graph.RoleManagement.Directory.RoleAssignmentScheduleRequests
+            .FilterByCurrentUserWithOn("principal")
+            .GetAsFilterByCurrentUserWithOnGetResponseAsync(
+                requestConfiguration =>
+                {
+                    requestConfiguration.QueryParameters.Expand = expand.Length == 0 ? null : expand;
+                    requestConfiguration.QueryParameters.Filter = "status eq 'PendingApproval'";
+                },
+                ct)
+            .ConfigureAwait(false);
+
+        return response?.Value ?? [];
     }
 
     private ActivationResult Failure(ODataError error)

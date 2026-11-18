@@ -54,7 +54,7 @@ public sealed class EligibilityAggregatorTests
 
         var aggregator = new EligibilityAggregator(scoped.Object, NoOptions, NullLogger<EligibilityAggregator>.Instance);
 
-        var result = await aggregator.ActivateAsync(account, request);
+        var result = await aggregator.ActivateAsync(account, request, TestContext.Current.CancellationToken);
 
         Assert.Same(expected, result);
         roleService.Verify(
@@ -105,7 +105,7 @@ public sealed class EligibilityAggregatorTests
 
         var aggregator = new EligibilityAggregator(scoped.Object, NoOptions, NullLogger<EligibilityAggregator>.Instance);
 
-        var result = await aggregator.DeactivateAsync(account, assignment);
+        var result = await aggregator.DeactivateAsync(account, assignment, TestContext.Current.CancellationToken);
 
         Assert.Same(expected, result);
         roleService.Verify(
@@ -146,7 +146,7 @@ public sealed class EligibilityAggregatorTests
 
         var aggregator = new EligibilityAggregator(scoped.Object, NoOptions, NullLogger<EligibilityAggregator>.Instance);
 
-        var result = await aggregator.GetAggregatedActiveAssignmentsAsync(new[] { goodAccount, badAccount });
+        var result = await aggregator.GetAggregatedActiveAssignmentsAsync(new[] { goodAccount, badAccount }, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
         Assert.Single(result[goodAccount].Items);
@@ -195,7 +195,7 @@ public sealed class EligibilityAggregatorTests
 
         var aggregator = new EligibilityAggregator(scoped.Object, NoOptions, NullLogger<EligibilityAggregator>.Instance);
 
-        var result = await aggregator.GetAggregatedEligibilitiesAsync(new[] { goodAccount, badAccount });
+        var result = await aggregator.GetAggregatedEligibilitiesAsync(new[] { goodAccount, badAccount }, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
         Assert.Equal(3, result[goodAccount].Items.Count);
@@ -220,7 +220,7 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new ArmRequestException(403, "AuthorizationFailed", "no authorization"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        var result = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        var result = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result[account].Items.Count);
         Assert.DoesNotContain(result[account].Items, e => e.Kind == PimResourceKind.AzureResourceRole);
@@ -283,7 +283,7 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new ArmRequestException(403, "AuthorizationFailed", "no authorization"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        var result = await aggregator.GetAggregatedActiveAssignmentsAsync(new[] { account });
+        var result = await aggregator.GetAggregatedActiveAssignmentsAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         Assert.Single(result[account].Items);
     }
@@ -300,8 +300,8 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new ArmRequestException(503, string.Empty, string.Empty));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
@@ -319,8 +319,8 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new TaskCanceledException());
         var aggregator = BuildAggregator(account, azure.Object);
 
-        var first = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        var first = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
         Assert.Contains("timed out", first[account].LoadError, StringComparison.OrdinalIgnoreCase);
@@ -339,8 +339,8 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new ArmSignInPendingException(new OperationCanceledException()));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
@@ -358,8 +358,8 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new MsalUiRequiredException("invalid_grant", "AADSTS65001: The user or administrator has not consented"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        var first = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
-        var second = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        var first = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+        var second = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Once());
         Assert.Equal(2, second[account].Items.Count);
@@ -379,7 +379,7 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new MsalUiRequiredException(MsalError.FailedToAcquireTokenSilentlyFromBroker, "WAM Error: (pii)"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        var result = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        var result = await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         Assert.Contains("Conditional Access", result[account].LoadError, StringComparison.Ordinal);
     }
@@ -400,7 +400,7 @@ public sealed class EligibilityAggregatorTests
             .Setup(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new MsalUiRequiredException("invalid_grant", "AADSTS65001: not consented"));
 
-        var result = await BuildAggregator(account, azure.Object, Options.Create(options)).GetAggregatedEligibilitiesAsync(new[] { account });
+        var result = await BuildAggregator(account, azure.Object, Options.Create(options)).GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         Assert.Contains("must consent to ModernWork Elevate", result[account].LoadError, StringComparison.Ordinal);
     }
@@ -419,12 +419,12 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new MsalUiRequiredException("invalid_grant", "AADSTS65001: not consented"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Once());
 
         aggregator.ForgetAzureBackoff(account);
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
@@ -442,8 +442,8 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new MsalClientException("network_not_available", "offline"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
@@ -458,9 +458,9 @@ public sealed class EligibilityAggregatorTests
             .ThrowsAsync(new MsalUiRequiredException("invalid_grant", "AADSTS65001: not consented"));
         var aggregator = BuildAggregator(account, azure.Object);
 
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
         aggregator.ForgetAllAzureBackoffs();
-        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account });
+        await aggregator.GetAggregatedEligibilitiesAsync(new[] { account }, TestContext.Current.CancellationToken);
 
         azure.Verify(s => s.GetEligibleAzureRolesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
@@ -484,7 +484,7 @@ public sealed class EligibilityAggregatorTests
             NoOptions,
             NullLogger<EligibilityAggregator>.Instance);
 
-        var result = await aggregator.GetAggregatedEligibilitiesAsync(Array.Empty<SignedInAccount>());
+        var result = await aggregator.GetAggregatedEligibilitiesAsync(Array.Empty<SignedInAccount>(), TestContext.Current.CancellationToken);
 
         Assert.Empty(result);
     }
@@ -501,7 +501,7 @@ public sealed class EligibilityAggregatorTests
             .ReturnsAsync(expected);
 
         var result = await BuildAggregator(account, azure.Object)
-            .GetEligibleChildScopesAsync(account, "/providers/Microsoft.Management/managementGroups/root");
+            .GetEligibleChildScopesAsync(account, "/providers/Microsoft.Management/managementGroups/root", TestContext.Current.CancellationToken);
 
         Assert.Same(expected, result);
     }

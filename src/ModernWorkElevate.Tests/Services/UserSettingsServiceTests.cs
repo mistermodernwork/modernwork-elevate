@@ -48,7 +48,7 @@ public sealed class UserSettingsServiceTests : IDisposable
         var store = CreateStore();
         var saved = UserSettings.Default with { ExpiryWarningMinutes = 15 };
 
-        var pending = store.UpdateAsync(_ => saved);
+        var pending = store.UpdateAsync(_ => saved, TestContext.Current.CancellationToken);
         var seenWhileWriting = store.Current.ExpiryWarningMinutes;
         await pending;
 
@@ -64,13 +64,13 @@ public sealed class UserSettingsServiceTests : IDisposable
         var store = CreateStore();
 
         // Holds the lock while it writes, so both updates below queue behind it.
-        var writing = store.UpdateAsync(_ => UserSettings.Default with { ExpiryWarningMinutes = 15 });
-        var first = store.UpdateAsync(s => s with { LastUsedAccountKey = "oid|tid|Global" });
-        var second = store.UpdateAsync(s => s with { VerifiedClientIds = ["8f3a1c2e-0000-4000-8000-000000000001"] });
+        var writing = store.UpdateAsync(_ => UserSettings.Default with { ExpiryWarningMinutes = 15 }, TestContext.Current.CancellationToken);
+        var first = store.UpdateAsync(s => s with { LastUsedAccountKey = "oid|tid|Global" }, TestContext.Current.CancellationToken);
+        var second = store.UpdateAsync(s => s with { VerifiedClientIds = ["8f3a1c2e-0000-4000-8000-000000000001"] }, TestContext.Current.CancellationToken);
         await Task.WhenAll(writing, first, second);
 
         var reloaded = CreateStore();
-        await reloaded.LoadAsync();
+        await reloaded.LoadAsync(TestContext.Current.CancellationToken);
         Assert.Equal(15, reloaded.Current.ExpiryWarningMinutes);
         Assert.Equal("oid|tid|Global", reloaded.Current.LastUsedAccountKey);
         Assert.Equal(["8f3a1c2e-0000-4000-8000-000000000001"], reloaded.Current.VerifiedClientIds!);
@@ -85,7 +85,7 @@ public sealed class UserSettingsServiceTests : IDisposable
         var fired = false;
         store.Changed += _ => fired = true;
 
-        await store.UpdateAsync(s => s);
+        await store.UpdateAsync(s => s, TestContext.Current.CancellationToken);
 
         Assert.False(fired);
         Assert.False(File.Exists(_filePath));
@@ -96,7 +96,7 @@ public sealed class UserSettingsServiceTests : IDisposable
     {
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(UserSettings.Default, store.Current);
         Assert.False(File.Exists(_filePath));
@@ -105,10 +105,10 @@ public sealed class UserSettingsServiceTests : IDisposable
     [Fact]
     public async Task LoadAsync_WithCorruptFile_FallsBackToDefaults()
     {
-        await File.WriteAllTextAsync(_filePath, "{ this is not json");
+        await File.WriteAllTextAsync(_filePath, "{ this is not json", TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(UserSettings.Default, store.Current);
     }
@@ -119,10 +119,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         var customised = new UserSettings(ThemePreference.Light, 4.0, false, 15);
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => customised);
+        await first.UpdateAsync(_ => customised, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(customised, second.Current);
     }
@@ -135,7 +135,7 @@ public sealed class UserSettingsServiceTests : IDisposable
         store.Changed += s => received = s;
 
         var newSettings = new UserSettings(ThemePreference.Dark, 2.0, true, 10);
-        await store.UpdateAsync(_ => newSettings);
+        await store.UpdateAsync(_ => newSettings, TestContext.Current.CancellationToken);
 
         Assert.NotNull(received);
         Assert.Equal(newSettings, received);
@@ -147,7 +147,7 @@ public sealed class UserSettingsServiceTests : IDisposable
         var store = CreateStore();
         var newSettings = new UserSettings(ThemePreference.Dark, 8.0, true, 5);
 
-        await store.UpdateAsync(_ => newSettings);
+        await store.UpdateAsync(_ => newSettings, TestContext.Current.CancellationToken);
 
         Assert.Equal(newSettings, store.Current);
     }
@@ -158,7 +158,7 @@ public sealed class UserSettingsServiceTests : IDisposable
         var nestedPath = Path.Combine(_tempDir, "nested", "deeper", "settings.json");
         var store = new UserSettingsService(nestedPath, NullLogger<UserSettingsService>.Instance);
 
-        await store.UpdateAsync(_ => UserSettings.Default with { ExpiryWarningMinutes = 15 });
+        await store.UpdateAsync(_ => UserSettings.Default with { ExpiryWarningMinutes = 15 }, TestContext.Current.CancellationToken);
 
         Assert.True(File.Exists(nestedPath));
     }
@@ -168,7 +168,7 @@ public sealed class UserSettingsServiceTests : IDisposable
     {
         var store = CreateStore();
 
-        await store.UpdateAsync(_ => new UserSettings(ThemePreference.Light, 1.0, true, 5));
+        await store.UpdateAsync(_ => new UserSettings(ThemePreference.Light, 1.0, true, 5), TestContext.Current.CancellationToken);
 
         Assert.False(File.Exists(_filePath + ".tmp"));
     }
@@ -177,9 +177,9 @@ public sealed class UserSettingsServiceTests : IDisposable
     public async Task UpdateAsync_ThemePreferenceRoundTripsAsString()
     {
         var store = CreateStore();
-        await store.UpdateAsync(_ => new UserSettings(ThemePreference.Light, 1.0, true, 5));
+        await store.UpdateAsync(_ => new UserSettings(ThemePreference.Light, 1.0, true, 5), TestContext.Current.CancellationToken);
 
-        var raw = await File.ReadAllTextAsync(_filePath);
+        var raw = await File.ReadAllTextAsync(_filePath, TestContext.Current.CancellationToken);
 
         // Enum should serialise as the readable name, not the underlying int —
         // hand-editing the file is a supported scenario.
@@ -200,10 +200,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "ExpiryWarningMinutes": 10
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(ThemePreference.Dark, store.Current.Theme);
         Assert.Equal(2.0, store.Current.DefaultDurationHours);
@@ -226,10 +226,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "LastUsedAccountKey": "oid|tid|Global"
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.True(store.Current.SettingsAccountsExpanded);
     }
@@ -255,10 +255,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "ExpiryWarningMinutes": 5
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.True(store.Current.AutomaticUpdatesEnabled);
     }
@@ -269,10 +269,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         var disabled = UserSettings.Default with { AutomaticUpdatesEnabled = false };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => disabled);
+        await first.UpdateAsync(_ => disabled, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.False(second.Current.AutomaticUpdatesEnabled);
     }
@@ -292,10 +292,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "ExpiryWarningMinutes": 5
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Null(store.Current.VerifiedClientIds);
     }
@@ -315,10 +315,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "VerifiedClientId": "8f3a1c2e-0000-4000-8000-000000000001"
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Null(store.Current.VerifiedClientIds);
     }
@@ -334,10 +334,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         var verified = UserSettings.Default with { VerifiedClientIds = ids };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => verified);
+        await first.UpdateAsync(_ => verified, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(ids, second.Current.VerifiedClientIds);
     }
@@ -348,10 +348,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         var collapsed = UserSettings.Default with { SettingsAccountsExpanded = false };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => collapsed);
+        await first.UpdateAsync(_ => collapsed, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.False(second.Current.SettingsAccountsExpanded);
     }
@@ -372,10 +372,10 @@ public sealed class UserSettingsServiceTests : IDisposable
             });
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => customised);
+        await first.UpdateAsync(_ => customised, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("oid-1|tenant-1|Global", second.Current.LastUsedAccountKey);
         Assert.NotNull(second.Current.ExpandedTenants);
@@ -397,10 +397,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "ExpiryWarningMinutes": 5
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(LogLevelPreference.Information, store.Current.LogLevel);
     }
@@ -411,10 +411,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         var verbose = UserSettings.Default with { LogLevel = LogLevelPreference.Debug };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => verbose);
+        await first.UpdateAsync(_ => verbose, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(LogLevelPreference.Debug, second.Current.LogLevel);
     }
@@ -435,10 +435,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => aliased);
+        await first.UpdateAsync(_ => aliased, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(second.Current.AccountAliases);
         Assert.Equal("EADM", second.Current.AccountAliases!["oid-1|tenant-1|Global"]);
@@ -455,10 +455,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => shortcuts);
+        await first.UpdateAsync(_ => shortcuts, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(shortcuts.PinnedEligibilities, second.Current.PinnedEligibilities);
 
@@ -479,10 +479,10 @@ public sealed class UserSettingsServiceTests : IDisposable
         };
 
         var first = CreateStore();
-        await first.UpdateAsync(_ => configured);
+        await first.UpdateAsync(_ => configured, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        await second.LoadAsync();
+        await second.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(second.Current.TicketSystems);
         Assert.Equal("ServiceNow", second.Current.TicketSystemFor("tenant-1"));
@@ -570,10 +570,10 @@ public sealed class UserSettingsServiceTests : IDisposable
               "ExpiryWarningMinutes": 5
             }
             """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
         var store = CreateStore();
 
-        await store.LoadAsync();
+        await store.LoadAsync(TestContext.Current.CancellationToken);
 
         Assert.Null(store.Current.AccountAliases);
     }
@@ -583,20 +583,20 @@ public sealed class UserSettingsServiceTests : IDisposable
     {
         // A lock at logon used to cache the defaults, and the first save of the session wrote
         // them over aliases, pins, ticket systems and the rest.
-        await CreateStore().UpdateAsync(_ => new UserSettings(ThemePreference.Light, 4.0, false, 15));
+        await CreateStore().UpdateAsync(_ => new UserSettings(ThemePreference.Light, 4.0, false, 15), TestContext.Current.CancellationToken);
 
         var store = CreateStore();
         using (LockedFile.Hold(_filePath))
         {
-            await store.LoadAsync();
+            await store.LoadAsync(TestContext.Current.CancellationToken);
         }
 
         Assert.Equal(UserSettings.Default.Theme, store.Current.Theme);
 
-        await store.UpdateAsync(s => s with { ExpiryWarningMinutes = 20 });
+        await store.UpdateAsync(s => s with { ExpiryWarningMinutes = 20 }, TestContext.Current.CancellationToken);
 
         var fresh = CreateStore();
-        await fresh.LoadAsync();
+        await fresh.LoadAsync(TestContext.Current.CancellationToken);
         Assert.Equal(ThemePreference.Light, fresh.Current.Theme);
         Assert.Equal(4.0, fresh.Current.DefaultDurationHours);
         Assert.Equal(20, fresh.Current.ExpiryWarningMinutes);
@@ -605,19 +605,19 @@ public sealed class UserSettingsServiceTests : IDisposable
     [Fact]
     public async Task UpdateAsync_WhileTheUnreadFileIsStillLocked_ThrowsAndKeepsIt()
     {
-        await CreateStore().UpdateAsync(_ => new UserSettings(ThemePreference.Light, 4.0, false, 15));
+        await CreateStore().UpdateAsync(_ => new UserSettings(ThemePreference.Light, 4.0, false, 15), TestContext.Current.CancellationToken);
 
         var store = CreateStore();
         using (LockedFile.Hold(_filePath))
         {
-            await store.LoadAsync();
+            await store.LoadAsync(TestContext.Current.CancellationToken);
             await Assert.ThrowsAnyAsync<IOException>(
-                () => store.UpdateAsync(s => s with { ExpiryWarningMinutes = 20 }));
+                () => store.UpdateAsync(s => s with { ExpiryWarningMinutes = 20 }, TestContext.Current.CancellationToken));
             Assert.False(File.Exists(_filePath + ".tmp"));
         }
 
         var fresh = CreateStore();
-        await fresh.LoadAsync();
+        await fresh.LoadAsync(TestContext.Current.CancellationToken);
         Assert.Equal(ThemePreference.Light, fresh.Current.Theme);
         Assert.Equal(15, fresh.Current.ExpiryWarningMinutes);
     }

@@ -20,6 +20,7 @@
   <supportedOn>
     <definitions>
       <definition name="SUPPORTED_ModernWorkElevate_1_2" displayName="$(string.SUPPORTED_ModernWorkElevate_1_2)" />
+      <definition name="SUPPORTED_ModernWorkElevate_1_4" displayName="$(string.SUPPORTED_ModernWorkElevate_1_4)" />
     </definitions>
   </supportedOn>
   <categories>
@@ -53,6 +54,19 @@
       <disabledValue><decimal value="0" /></disabledValue>
     </policy>
 
+    <!-- Versionsprüfung bei GitHub: 1 = an (Benutzer kann nicht abschalten), 0 = aus (die App
+         kontaktiert GitHub nie, auch nicht per Knopf). Nicht konfiguriert = Benutzerwahl, aus. -->
+    <policy name="UpdateCheck"
+            class="Machine"
+            displayName="$(string.UpdateCheck)"
+            explainText="$(string.UpdateCheck_Help)"
+            key="SOFTWARE\Policies\ModernWorkElevate"
+            valueName="UpdateCheck">
+      <parentCategory ref="Cat_ModernWorkElevate" />
+      <supportedOn ref="SUPPORTED_ModernWorkElevate_1_4" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
 
 
   </policies>

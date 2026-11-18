@@ -3,8 +3,44 @@
 All notable changes to ModernWork Elevate. Versions follow [semantic versioning](https://semver.org). Each
 entry also ships inside the app as its "what's new" text (`packaging/release-notes/<version>.md`).
 
-## Unreleased
+## 1.4.1
 
+First release of the 1.4 line; contains everything listed under 1.4.0.
+
+- 1.4.0 was tagged but never published: the release workflow had become invalid (GitHub evaluates
+  `${{ }}` even inside comments of a `run:` block, and an empty one rejected the whole file), so
+  the tag started no build. Fixed; the app code is the same as in 1.4.0.
+
+## 1.4.0
+
+- **Optional check for new versions.** Settings → Updates → *Check for new versions* (off by
+  default) asks GitHub once a day for the latest release and shows a notice only when a newer
+  version exists; its button opens the release page. Nothing is downloaded or installed. New
+  machine policy `UpdateCheck` (ADMX *Check GitHub for new versions*): 1 = on, 0 = never contact
+  GitHub. The earlier `AutomaticUpdatesEnabled` setting — written as true without asking — no
+  longer counts as consent. The unused download/restart flow of the update window is removed.
+  `PRIVACY.md` names GitHub as the one optional destination.
+- **Installer detects .NET 10.** The MSI's runtime check never found an installed runtime — WiX put
+  the search depth on the directory row, not the file row, so `System.Private.CoreLib.dll` was never
+  looked for in the version folder — and every install needed `SKIPRUNTIMECHECK=1`. The check now
+  reads the version of `dotnet.exe`; the property is only needed when the runtime comes later.
+- **Waiting for approval.** Your own activation requests that an approver has not decided yet are
+  listed above ACTIVE — for directory roles, PIM for Groups and Azure resource roles, read from
+  Microsoft, so they survive a restart and include requests made in the portal. While something
+  waits, the app checks every 15 seconds; an approval, denial, expiry or cancellation raises a
+  notification, and an approved role switches to ACTIVE at once. No new permission: the app reads
+  the request status only, so the notification does not name the approver.
+- Release builds can be signed with Azure Artifact Signing: the release workflow signs in with
+  GitHub OIDC (environment `release`) instead of importing a `.pfx` secret, which new publicly
+  trusted certificates no longer allow. `build.ps1` / `sign.ps1` gain `-ArtifactSigningMetadata` and
+  `-ArtifactSigningDlib`; certificate signing with `-CertificateThumbprint` is unchanged. Without
+  configuration, releases stay unsigned. Setup: `docs/code-signing-wdac.md`.
+- Tests moved from xunit 2.9.3 to xunit v3 (`xunit.v3` 4.0.3) on Microsoft.Testing.Platform:
+  `dotnet test` runs in the .NET 10 SDK's MTP mode (`global.json` → `test.runner`), coverage comes
+  from `coverlet.MTP` 10.1.1 with its settings in `src/ModernWorkElevate.Tests/testconfig.json`
+  (replaces `coverlet.runsettings`). `xunit.runner.visualstudio`, `Microsoft.NET.Test.Sdk` and
+  `coverlet.collector` are no longer needed. Tests pass `TestContext.Current.CancellationToken`
+  to async calls (xunit analyzer xUnit1051). No change to the app.
 - Dependencies: Microsoft.Extensions.* 10.0.15 (.NET 10 servicing), Microsoft.Graph 5.105.0 (pulls
   Microsoft.IdentityModel 8.x instead of the deprecated 7.6), System.Drawing.Common 4.7.3,
   Serilog.Sinks.Console 6.1.1; test tooling updated.

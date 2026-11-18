@@ -24,7 +24,7 @@ public sealed class PimRoleServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("directory-eligibilities.json")));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.GetEligibleRolesAsync();
+        var result = await service.GetEligibleRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
 
@@ -52,7 +52,7 @@ public sealed class PimRoleServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("directory-eligibilities.json")));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.GetEligibleRolesAsync();
+        var result = await service.GetEligibleRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
         Assert.Equal("Global Administrator", result[0].DisplayName);
@@ -69,7 +69,7 @@ public sealed class PimRoleServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("directory-eligibilities.json")));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.GetEligibleRolesAsync();
+        var result = await service.GetEligibleRolesAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
         Assert.Equal(3, handler.RequestCount);
@@ -83,7 +83,7 @@ public sealed class PimRoleServiceTests
             FakeHttpMessageHandler.JsonResponse("""{ "error": { "code": "InvalidAuthenticationToken", "message": "Access token is empty." } }""", HttpStatusCode.Unauthorized));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => service.GetEligibleRolesAsync());
+        await Assert.ThrowsAnyAsync<Exception>(() => service.GetEligibleRolesAsync(TestContext.Current.CancellationToken));
         Assert.Equal(1, handler.RequestCount);
     }
 
@@ -94,7 +94,7 @@ public sealed class PimRoleServiceTests
             FakeHttpMessageHandler.JsonResponse(FixtureLoader.Load("directory-active-assignments.json")));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.GetActiveRolesAsync();
+        var result = await service.GetActiveRolesAsync(TestContext.Current.CancellationToken);
 
         var assignment = Assert.Single(result);
         Assert.Equal(PimResourceKind.DirectoryRole, assignment.Kind);
@@ -114,7 +114,7 @@ public sealed class PimRoleServiceTests
         var eligibility = new PimEligibility(PimResourceKind.DirectoryRole, "User Administrator", "role-def-ua", "/administrativeUnits/au-1", "user-oid-1", null, false);
         var request = new ActivationRequest(eligibility, TimeSpan.FromHours(2), "Fixing a locked account", new TicketInfo("INC-555", "ServiceNow"));
 
-        var result = await service.ActivateAsync(request);
+        var result = await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(ActivationStatus.Provisioned, result.Status);
@@ -135,7 +135,7 @@ public sealed class PimRoleServiceTests
                 FixtureLoader.Load("activation-pending-approval.json"), HttpStatusCode.Created));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         // A 201 can still carry a non-immediate status — parsed from the body.
         Assert.Equal(ActivationStatus.PendingApproval, result.Status);
@@ -150,7 +150,7 @@ public sealed class PimRoleServiceTests
                 FixtureLoader.Load("error-justification-required.json"), HttpStatusCode.BadRequest));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.NotNull(result.Error);
@@ -168,7 +168,7 @@ public sealed class PimRoleServiceTests
                 FixtureLoader.Load("activation-provisioned.json"), HttpStatusCode.Created));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(2, handler.RequestCount);
@@ -187,7 +187,7 @@ public sealed class PimRoleServiceTests
         var request = new ActivationRequest(
             eligibility, TimeSpan.FromHours(1), "Dry run", null, IsValidationOnly: true);
 
-        await service.ActivateAsync(request);
+        await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         var body = handler.RequestBodies[0];
         Assert.NotNull(body);
@@ -202,7 +202,7 @@ public sealed class PimRoleServiceTests
                 FixtureLoader.Load("activation-provisioned.json"), HttpStatusCode.Created));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        await service.ActivateAsync(SampleRequest() with { AuthContextClaim = "c1" });
+        await service.ActivateAsync(SampleRequest() with { AuthContextClaim = "c1" }, TestContext.Current.CancellationToken);
 
         var option = Assert.Single(handler.Requests[0].Options
             .Select(kv => kv.Value)
@@ -219,7 +219,7 @@ public sealed class PimRoleServiceTests
                 FixtureLoader.Load("activation-provisioned.json"), HttpStatusCode.Created));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        await service.ActivateAsync(SampleRequest());
+        await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.Empty(handler.Requests[0].Options
             .Select(kv => kv.Value)
@@ -234,7 +234,7 @@ public sealed class PimRoleServiceTests
                 FixtureLoader.Load("error-acrs-validation-failed.json"), HttpStatusCode.BadRequest));
         var service = new PimRoleService(GraphClientTestBuilder.Build(handler), NullLogger<PimRoleService>.Instance);
 
-        var result = await service.ActivateAsync(SampleRequest());
+        var result = await service.ActivateAsync(SampleRequest(), TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
         Assert.NotNull(result.Error);

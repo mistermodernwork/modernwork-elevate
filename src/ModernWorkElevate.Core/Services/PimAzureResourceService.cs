@@ -260,6 +260,57 @@ public sealed class PimAzureResourceService : IPimAzureResourceService
         return ParsePolicyRules(Child(Child(assignment, "properties"), "effectiveRules"));
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PendingApprovalRequest>> GetPendingApprovalsAsync(CancellationToken ct = default)
+    {
+        var items = await GetMyRequestsAsync(ct).ConfigureAwait(false);
+
+        // asRequestor() lists every request the user ever filed, decided or not; ARM
+        // documents no way to combine it with a status filter, so it is narrowed here.
+        return items
+            .Where(item => ActivationStatusParser.Parse(Text(Child(item, "properties"), "status")) == ActivationStatus.PendingApproval
+                && IsSelfRequest(Text(Child(item, "properties"), "requestType")))
+            .Select(ToPendingApproval)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<ActivationStatus?> GetRequestStatusAsync(string requestId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(requestId))
+        {
+            return null;
+        }
+
+        var items = await GetMyRequestsAsync(ct).ConfigureAwait(false);
+        var request = items.FirstOrDefault(item =>
+            string.Equals(Text(item, "name"), requestId, StringComparison.OrdinalIgnoreCase));
+
+        return request.ValueKind == JsonValueKind.Undefined
+            ? null
+            : ActivationStatusParser.Parse(Text(Child(request, "properties"), "status"));
+    }
+
+    private static bool IsSelfRequest(string? requestType)
+        => requestType is "SelfActivate" or "SelfExtend" or "SelfRenew";
+
+    private static TimeSpan? Duration(JsonElement? parent, string name)
+    {
+        if (Text(parent, name) is not { Length: > 0 } text)
+        {
+            return null;
+        }
+
+        try
+        {
+            return XmlConvert.ToTimeSpan(text);
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
     private static JsonElement? Child(JsonElement? parent, string name)
         => parent is { ValueKind: JsonValueKind.Object } element && element.TryGetProperty(name, out var child)
             ? child
@@ -413,6 +464,26 @@ public sealed class PimAzureResourceService : IPimAzureResourceService
             AssignmentScheduleId: Text(item, "name") ?? string.Empty,
             ScopeLabel: BuildScopeLabel(Child(expanded, "scope"), scopeId));
     }
+
+    private PendingApprovalRequest ToPendingApproval(JsonElement item)
+    {
+        var properties = Child(item, "properties");
+        var expanded = Child(properties, "expandedProperties");
+        var scopeId = Text(properties, "scope") ?? string.Empty;
+        return new PendingApprovalRequest(
+            Kind: PimResourceKind.AzureResourceRole,
+            DisplayName: Text(Child(expanded, "roleDefinition"), "displayName") ?? UnknownRoleName,
+            ResourceId: Text(properties, "roleDefinitionId") ?? string.Empty,
+            ScopeId: scopeId,
+            RequestId: Text(item, "name") ?? string.Empty,
+            RequestedAt: Time(properties, "createdOn"),
+            RequestedDuration: Duration(Child(Child(properties, "scheduleInfo"), "expiration"), "duration"),
+            ScopeLabel: BuildScopeLabel(Child(expanded, "scope"), scopeId));
+    }
+
+    /// <summary>Every schedule request the signed-in user filed, at any scope.</summary>
+    private Task<List<JsonElement>> GetMyRequestsAsync(CancellationToken ct)
+        => GetPagedAsync($"{Provider}/roleAssignmentScheduleRequests?api-version={ApiVersion}&$filter=asRequestor()", ct);
 
     /// <summary>
     /// The direct children of one management group, or an empty list when ARM refuses

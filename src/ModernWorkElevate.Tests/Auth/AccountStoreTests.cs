@@ -33,7 +33,7 @@ public sealed class AccountStoreTests : IDisposable
     {
         var store = CreateStore();
 
-        var accounts = await store.GetAllAsync();
+        var accounts = await store.GetAllAsync(TestContext.Current.CancellationToken);
 
         Assert.Empty(accounts);
     }
@@ -43,11 +43,11 @@ public sealed class AccountStoreTests : IDisposable
     {
         var account = MakeAccount("oid-1");
         var first = CreateStore();
-        await first.UpsertAsync(account);
+        await first.UpsertAsync(account, TestContext.Current.CancellationToken);
 
         // New instance, same file — must see the persisted account.
         var second = CreateStore();
-        var loaded = await second.GetAllAsync();
+        var loaded = await second.GetAllAsync(TestContext.Current.CancellationToken);
 
         var only = Assert.Single(loaded);
         Assert.Equal(account.ObjectId, only.ObjectId);
@@ -59,13 +59,13 @@ public sealed class AccountStoreTests : IDisposable
     {
         var original = MakeAccount("oid-1") with { AddedAt = DateTimeOffset.UtcNow.AddDays(-7) };
         var store = CreateStore();
-        await store.UpsertAsync(original);
+        await store.UpsertAsync(original, TestContext.Current.CancellationToken);
 
         // Same oid, different metadata, fresh AddedAt — only metadata should update.
         var updated = original with { DisplayName = "Updated Name", AddedAt = DateTimeOffset.UtcNow };
-        await store.UpsertAsync(updated);
+        await store.UpsertAsync(updated, TestContext.Current.CancellationToken);
 
-        var loaded = Assert.Single(await store.GetAllAsync());
+        var loaded = Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
         Assert.Equal("Updated Name", loaded.DisplayName);
         Assert.Equal(original.AddedAt, loaded.AddedAt);
     }
@@ -74,10 +74,10 @@ public sealed class AccountStoreTests : IDisposable
     public async Task UpsertAsync_DifferentOids_StoresMultipleAccounts()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
-        await store.UpsertAsync(MakeAccount("oid-2", "22222222-2222-2222-2222-222222222222"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-2", "22222222-2222-2222-2222-222222222222"), TestContext.Current.CancellationToken);
 
-        var accounts = await store.GetAllAsync();
+        var accounts = await store.GetAllAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, accounts.Count);
         Assert.Contains(accounts, a => a.ObjectId == "oid-1");
@@ -88,9 +88,9 @@ public sealed class AccountStoreTests : IDisposable
     public async Task GetByIdAsync_ReturnsMatchingAccountCaseInsensitive()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("Abc-Def"));
+        await store.UpsertAsync(MakeAccount("Abc-Def"), TestContext.Current.CancellationToken);
 
-        var found = await store.GetByIdAsync("abc-DEF", "11111111-1111-1111-1111-111111111111");
+        var found = await store.GetByIdAsync("abc-DEF", "11111111-1111-1111-1111-111111111111", TestContext.Current.CancellationToken);
 
         Assert.NotNull(found);
         Assert.Equal("Abc-Def", found!.ObjectId);
@@ -100,9 +100,9 @@ public sealed class AccountStoreTests : IDisposable
     public async Task GetByIdAsync_WithUnknownOid_ReturnsNull()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
 
-        var found = await store.GetByIdAsync("oid-other", "11111111-1111-1111-1111-111111111111");
+        var found = await store.GetByIdAsync("oid-other", "11111111-1111-1111-1111-111111111111", TestContext.Current.CancellationToken);
 
         Assert.Null(found);
     }
@@ -111,11 +111,11 @@ public sealed class AccountStoreTests : IDisposable
     public async Task GetByIdAsync_SameOidDifferentTenants_ReturnsRequestedEnrollmentOnly()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-home"));
-        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-guest"));
+        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-home"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-guest"), TestContext.Current.CancellationToken);
 
-        var home = await store.GetByIdAsync("oid-shared", "tenant-home");
-        var guest = await store.GetByIdAsync("oid-shared", "tenant-guest");
+        var home = await store.GetByIdAsync("oid-shared", "tenant-home", TestContext.Current.CancellationToken);
+        var guest = await store.GetByIdAsync("oid-shared", "tenant-guest", TestContext.Current.CancellationToken);
 
         Assert.NotNull(home);
         Assert.NotNull(guest);
@@ -127,10 +127,10 @@ public sealed class AccountStoreTests : IDisposable
     public async Task UpsertAsync_SameOidDifferentTenants_StoresBothEnrollments()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-home"));
-        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-guest"));
+        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-home"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-guest"), TestContext.Current.CancellationToken);
 
-        var all = await store.GetAllAsync();
+        var all = await store.GetAllAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, all.Count);
         Assert.Contains(all, a => a.TenantId == "tenant-home");
@@ -141,12 +141,12 @@ public sealed class AccountStoreTests : IDisposable
     public async Task RemoveAsync_RemovesMatchingEntry()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
-        await store.UpsertAsync(MakeAccount("oid-2"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-2"), TestContext.Current.CancellationToken);
 
-        await store.RemoveAsync("oid-1", "11111111-1111-1111-1111-111111111111");
+        await store.RemoveAsync("oid-1", "11111111-1111-1111-1111-111111111111", TestContext.Current.CancellationToken);
 
-        var remaining = await store.GetAllAsync();
+        var remaining = await store.GetAllAsync(TestContext.Current.CancellationToken);
         Assert.Equal("oid-2", Assert.Single(remaining).ObjectId);
     }
 
@@ -154,12 +154,12 @@ public sealed class AccountStoreTests : IDisposable
     public async Task RemoveAsync_SameOidDifferentTenant_OnlyRemovesMatchingEnrollment()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-home"));
-        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-guest"));
+        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-home"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-shared", "tenant-guest"), TestContext.Current.CancellationToken);
 
-        await store.RemoveAsync("oid-shared", "tenant-home");
+        await store.RemoveAsync("oid-shared", "tenant-home", TestContext.Current.CancellationToken);
 
-        var remaining = Assert.Single(await store.GetAllAsync());
+        var remaining = Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
         Assert.Equal("tenant-guest", remaining.TenantId);
     }
 
@@ -167,11 +167,11 @@ public sealed class AccountStoreTests : IDisposable
     public async Task RemoveAsync_WithUnknownOid_IsNoOp()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
 
-        await store.RemoveAsync("oid-other", "11111111-1111-1111-1111-111111111111");
+        await store.RemoveAsync("oid-other", "11111111-1111-1111-1111-111111111111", TestContext.Current.CancellationToken);
 
-        Assert.Single(await store.GetAllAsync());
+        Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public sealed class AccountStoreTests : IDisposable
         File.WriteAllText(_filePath, "{not valid json");
         var store = CreateStore();
 
-        var accounts = await store.GetAllAsync();
+        var accounts = await store.GetAllAsync(TestContext.Current.CancellationToken);
 
         // Corrupt file is treated as empty; subsequent writes recover.
         Assert.Empty(accounts);
@@ -192,15 +192,15 @@ public sealed class AccountStoreTests : IDisposable
         // A read that fails used to count as "no enrollments", and the write then dropped
         // every other tenant's account.
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
 
         using (LockedFile.Hold(_filePath))
         {
-            await Assert.ThrowsAnyAsync<IOException>(() => store.UpsertAsync(MakeAccount("oid-2")));
+            await Assert.ThrowsAnyAsync<IOException>(() => store.UpsertAsync(MakeAccount("oid-2"), TestContext.Current.CancellationToken));
             Assert.False(File.Exists(_filePath + ".tmp"));
         }
 
-        var only = Assert.Single(await store.GetAllAsync());
+        var only = Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
         Assert.Equal("oid-1", only.ObjectId);
     }
 
@@ -209,15 +209,15 @@ public sealed class AccountStoreTests : IDisposable
     {
         // A silent no-op here let the caller purge the token and drop the row anyway.
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
 
         using (LockedFile.Hold(_filePath))
         {
             await Assert.ThrowsAnyAsync<IOException>(
-                () => store.RemoveAsync("oid-1", "11111111-1111-1111-1111-111111111111"));
+                () => store.RemoveAsync("oid-1", "11111111-1111-1111-1111-111111111111", TestContext.Current.CancellationToken));
         }
 
-        Assert.Single(await store.GetAllAsync());
+        Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -225,11 +225,11 @@ public sealed class AccountStoreTests : IDisposable
     {
         // No empty fallback for reads: callers decide on it whether to purge a token.
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-1"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
 
         using (LockedFile.Hold(_filePath))
         {
-            await Assert.ThrowsAnyAsync<IOException>(() => store.GetAllAsync());
+            await Assert.ThrowsAnyAsync<IOException>(() => store.GetAllAsync(TestContext.Current.CancellationToken));
         }
     }
 
@@ -239,10 +239,10 @@ public sealed class AccountStoreTests : IDisposable
         File.WriteAllText(_filePath, "garbage");
         var store = CreateStore();
 
-        await store.UpsertAsync(MakeAccount("oid-1"));
+        await store.UpsertAsync(MakeAccount("oid-1"), TestContext.Current.CancellationToken);
 
         var fresh = CreateStore();
-        var only = Assert.Single(await fresh.GetAllAsync());
+        var only = Assert.Single(await fresh.GetAllAsync(TestContext.Current.CancellationToken));
         Assert.Equal("oid-1", only.ObjectId);
     }
 
@@ -251,10 +251,10 @@ public sealed class AccountStoreTests : IDisposable
     {
         var account = MakeAccount("oid-china") with { Cloud = EntraCloud.China };
         var first = CreateStore();
-        await first.UpsertAsync(account);
+        await first.UpsertAsync(account, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        var loaded = Assert.Single(await second.GetAllAsync());
+        var loaded = Assert.Single(await second.GetAllAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(EntraCloud.China, loaded.Cloud);
         Assert.Equal(account.ObjectId, loaded.ObjectId);
@@ -275,10 +275,10 @@ public sealed class AccountStoreTests : IDisposable
           }
         ]
         """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
 
         var store = CreateStore();
-        var loaded = Assert.Single(await store.GetAllAsync());
+        var loaded = Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(EntraCloud.Global, loaded.Cloud);
         Assert.Equal("oid-legacy", loaded.ObjectId);
@@ -289,10 +289,10 @@ public sealed class AccountStoreTests : IDisposable
     {
         var account = MakeAccount("oid-dc") with { AuthMethod = AuthMethod.DeviceCode };
         var first = CreateStore();
-        await first.UpsertAsync(account);
+        await first.UpsertAsync(account, TestContext.Current.CancellationToken);
 
         var second = CreateStore();
-        var loaded = Assert.Single(await second.GetAllAsync());
+        var loaded = Assert.Single(await second.GetAllAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(AuthMethod.DeviceCode, loaded.AuthMethod);
         Assert.Equal(account.ObjectId, loaded.ObjectId);
@@ -316,10 +316,10 @@ public sealed class AccountStoreTests : IDisposable
           }
         ]
         """;
-        await File.WriteAllTextAsync(_filePath, legacyJson);
+        await File.WriteAllTextAsync(_filePath, legacyJson, TestContext.Current.CancellationToken);
 
         var store = CreateStore();
-        var loaded = Assert.Single(await store.GetAllAsync());
+        var loaded = Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal(AuthMethod.Broker, loaded.AuthMethod);
         Assert.Equal("oid-legacy", loaded.ObjectId);
@@ -329,9 +329,9 @@ public sealed class AccountStoreTests : IDisposable
     public async Task ReorderAsync_PersistsNewOrder()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-a", "tenant-a"));
-        await store.UpsertAsync(MakeAccount("oid-b", "tenant-b"));
-        await store.UpsertAsync(MakeAccount("oid-c", "tenant-c"));
+        await store.UpsertAsync(MakeAccount("oid-a", "tenant-a"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-b", "tenant-b"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-c", "tenant-c"), TestContext.Current.CancellationToken);
 
         var reordered = new[]
         {
@@ -339,10 +339,10 @@ public sealed class AccountStoreTests : IDisposable
             MakeAccount("oid-a", "tenant-a"),
             MakeAccount("oid-b", "tenant-b"),
         };
-        await store.ReorderAsync(reordered);
+        await store.ReorderAsync(reordered, TestContext.Current.CancellationToken);
 
         var fresh = CreateStore();
-        var loaded = await fresh.GetAllAsync();
+        var loaded = await fresh.GetAllAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(3, loaded.Count);
         Assert.Equal("oid-c", loaded[0].ObjectId);
@@ -358,17 +358,17 @@ public sealed class AccountStoreTests : IDisposable
         var oldA = DateTimeOffset.UtcNow.AddDays(-5);
         var oldB = DateTimeOffset.UtcNow.AddDays(-2);
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-a") with { AddedAt = oldA, TenantId = "tenant-a" });
-        await store.UpsertAsync(MakeAccount("oid-b") with { AddedAt = oldB, TenantId = "tenant-b" });
+        await store.UpsertAsync(MakeAccount("oid-a") with { AddedAt = oldA, TenantId = "tenant-a" }, TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-b") with { AddedAt = oldB, TenantId = "tenant-b" }, TestContext.Current.CancellationToken);
 
         var fresh = new[]
         {
             MakeAccount("oid-b", "tenant-b") with { AddedAt = DateTimeOffset.UtcNow },
             MakeAccount("oid-a", "tenant-a") with { AddedAt = DateTimeOffset.UtcNow },
         };
-        await store.ReorderAsync(fresh);
+        await store.ReorderAsync(fresh, TestContext.Current.CancellationToken);
 
-        var loaded = await store.GetAllAsync();
+        var loaded = await store.GetAllAsync(TestContext.Current.CancellationToken);
         Assert.Equal(oldB, loaded[0].AddedAt);
         Assert.Equal(oldA, loaded[1].AddedAt);
     }
@@ -379,9 +379,9 @@ public sealed class AccountStoreTests : IDisposable
         // Defensive: a stale caller view must not silently drop enrollments
         // it doesn't know about.
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-a", "tenant-a"));
-        await store.UpsertAsync(MakeAccount("oid-b", "tenant-b"));
-        await store.UpsertAsync(MakeAccount("oid-c", "tenant-c"));
+        await store.UpsertAsync(MakeAccount("oid-a", "tenant-a"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-b", "tenant-b"), TestContext.Current.CancellationToken);
+        await store.UpsertAsync(MakeAccount("oid-c", "tenant-c"), TestContext.Current.CancellationToken);
 
         // oid-c not mentioned in partial — must survive at the tail.
         var partial = new[]
@@ -389,9 +389,9 @@ public sealed class AccountStoreTests : IDisposable
             MakeAccount("oid-b", "tenant-b"),
             MakeAccount("oid-a", "tenant-a"),
         };
-        await store.ReorderAsync(partial);
+        await store.ReorderAsync(partial, TestContext.Current.CancellationToken);
 
-        var loaded = await store.GetAllAsync();
+        var loaded = await store.GetAllAsync(TestContext.Current.CancellationToken);
         Assert.Equal(3, loaded.Count);
         Assert.Equal("oid-b", loaded[0].ObjectId);
         Assert.Equal("oid-a", loaded[1].ObjectId);
@@ -402,16 +402,16 @@ public sealed class AccountStoreTests : IDisposable
     public async Task ReorderAsync_IgnoresUnknownAccountsInPayload()
     {
         var store = CreateStore();
-        await store.UpsertAsync(MakeAccount("oid-a", "tenant-a"));
+        await store.UpsertAsync(MakeAccount("oid-a", "tenant-a"), TestContext.Current.CancellationToken);
 
         var payload = new[]
         {
             MakeAccount("oid-ghost", "tenant-ghost"),
             MakeAccount("oid-a", "tenant-a"),
         };
-        await store.ReorderAsync(payload);
+        await store.ReorderAsync(payload, TestContext.Current.CancellationToken);
 
-        var loaded = Assert.Single(await store.GetAllAsync());
+        var loaded = Assert.Single(await store.GetAllAsync(TestContext.Current.CancellationToken));
         Assert.Equal("oid-a", loaded.ObjectId);
     }
 
@@ -419,9 +419,9 @@ public sealed class AccountStoreTests : IDisposable
     public async Task ReorderAsync_EmptyStore_IsNoOp()
     {
         var store = CreateStore();
-        await store.ReorderAsync(new[] { MakeAccount("oid-x", "tenant-x") });
+        await store.ReorderAsync(new[] { MakeAccount("oid-x", "tenant-x") }, TestContext.Current.CancellationToken);
 
-        Assert.Empty(await store.GetAllAsync());
+        Assert.Empty(await store.GetAllAsync(TestContext.Current.CancellationToken));
     }
 
     private static SignedInAccount MakeAccount(string oid, string tenant = "11111111-1111-1111-1111-111111111111")

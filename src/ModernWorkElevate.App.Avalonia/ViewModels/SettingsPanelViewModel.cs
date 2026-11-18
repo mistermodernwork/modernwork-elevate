@@ -117,8 +117,12 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
     [ObservableProperty]
     private ExpiryThresholdOption _selectedExpiryThreshold;
 
+    /// <summary>
+    /// The user's "check for new versions" switch (<see cref="UserSettings.UpdateCheckEnabled"/>),
+    /// off until they turn it on. Shows the policy's value instead while a policy decides.
+    /// </summary>
     [ObservableProperty]
-    private bool _automaticUpdatesEnabled;
+    private bool _updateCheckEnabled;
 
     /// <summary>
     /// Bound to the log-detail ComboBox in DIAGNOSTICS. Applied live through
@@ -352,6 +356,23 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
         && _registrations.Any(r => SlotOf(r)?.Key == new TenantSlot(NewTenantCloud.Cloud, NewTenantId).Key);
 
     /// <summary>Add is allowed for a new tenant id once the chosen way yields a client id.</summary>
+    /// <summary>True when the machine policy turns the update check on or off; the switch is then locked.</summary>
+    public bool IsUpdateCheckManagedByPolicy => _options.UpdateCheckByPolicy is not null;
+
+    /// <summary>True when the user may flip the update-check switch.</summary>
+    public bool CanChangeUpdateCheck => !IsUpdateCheckManagedByPolicy;
+
+    /// <summary>True when "Check for updates" may contact GitHub (not forbidden by policy).</summary>
+    public bool CanCheckForUpdates => _options.UpdateCheckByPolicy != false;
+
+    /// <summary>The caption under the switch, naming who decides.</summary>
+    public string UpdateCheckCaption => _options.UpdateCheckByPolicy switch
+    {
+        true => "Turned on by your organization.",
+        false => "Turned off by your organization.",
+        null => "Once a day the app asks GitHub for the latest version and tells you only when there is a newer one. Nothing is downloaded or installed. GitHub sees your IP address.",
+    };
+
     public bool CanAddRegistration => !_options.TenantsLockedByPolicy
         && Guid.TryParse(NewTenantId, out _)
         && !IsNewTenantAlreadyConfigured
@@ -443,7 +464,7 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
             SelectedExpiryThreshold = ExpiryThresholdOptions.FirstOrDefault(o => o.Minutes == current.ExpiryWarningMinutes)
                 ?? ExpiryThresholdOptions[0];
             ExpiryWarningEnabled = current.ExpiryWarningEnabled;
-            AutomaticUpdatesEnabled = current.AutomaticUpdatesEnabled;
+            UpdateCheckEnabled = _options.UpdateCheckByPolicy ?? current.UpdateCheckEnabled;
             SyncTenantNodes();
             ClearForm();
             ShowRestartPrompt = false;
@@ -909,12 +930,10 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
             var outcome = await handler.Invoke();
             UpdateCheckStatus = outcome switch
             {
-                UpdateCheckOutcome.UpdateAvailable => "An update is available — see the update window.",
+                UpdateCheckOutcome.UpdateAvailable => "A newer version is available — see the window in the corner.",
                 UpdateCheckOutcome.UpToDate => "You are running the latest version.",
-                UpdateCheckOutcome.Deferred => "A newer version exists but is not offered yet: releases are"
-                    + " held back for 72 hours so security tools can classify them first.",
                 UpdateCheckOutcome.Failed => "Could not reach GitHub. Check the connection and try again.",
-                _ => "Updates only work in an installed version, not in a portable or development build.",
+                _ => "Your organization does not allow checking for new versions.",
             };
         }
         finally
@@ -1068,9 +1087,10 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
         SchedulePersist();
     }
 
-    partial void OnAutomaticUpdatesEnabledChanged(bool value)
+    partial void OnUpdateCheckEnabledChanged(bool value)
     {
-        if (_suppressPersist)
+        // A policy-shown value is not the user's choice and is never written back.
+        if (_suppressPersist || IsUpdateCheckManagedByPolicy)
         {
             return;
         }
@@ -1170,7 +1190,7 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
         var expiryWarningEnabled = ExpiryWarningEnabled;
         var expiryWarningMinutes = SelectedExpiryThreshold.Minutes;
         var tenantsExpanded = _persistedTenantsExpanded;
-        var automaticUpdatesEnabled = AutomaticUpdatesEnabled;
+        var updateCheckEnabled = IsUpdateCheckManagedByPolicy ? (bool?)null : UpdateCheckEnabled;
         var logLevel = SelectedLogLevel.Value;
 
         await SaveSettingsAsync(current => current with
@@ -1180,7 +1200,7 @@ public sealed partial class SettingsPanelViewModel : ObservableObject
             ExpiryWarningEnabled = expiryWarningEnabled,
             ExpiryWarningMinutes = expiryWarningMinutes,
             SettingsAccountsExpanded = tenantsExpanded,
-            AutomaticUpdatesEnabled = automaticUpdatesEnabled,
+            UpdateCheckEnabled = updateCheckEnabled ?? current.UpdateCheckEnabled,
             LogLevel = logLevel,
         }).ConfigureAwait(false);
     }

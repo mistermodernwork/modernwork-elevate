@@ -28,7 +28,7 @@ public sealed class PimGroupServiceTests
         var service = new PimGroupService(
             GraphClientTestBuilder.Build(handler), resolver.Object, NullLogger<PimGroupService>.Instance);
 
-        var result = await service.GetEligibleGroupAccessAsync();
+        var result = await service.GetEligibleGroupAccessAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Count);
 
@@ -57,7 +57,7 @@ public sealed class PimGroupServiceTests
         var eligibility = new PimEligibility(PimResourceKind.GroupMembership, "grp-project-x", "group-1", "group-1", "user-oid-1", null, false);
         var request = new ActivationRequest(eligibility, TimeSpan.FromHours(3), "Project work", new TicketInfo("CHG-77", "Jira"));
 
-        var result = await service.ActivateAsync(request);
+        var result = await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(ActivationStatus.Provisioned, result.Status);
@@ -86,7 +86,7 @@ public sealed class PimGroupServiceTests
         var eligibility = new PimEligibility(PimResourceKind.GroupMembership, "grp-project-x", "group-1", "group-1", "user-oid-1", null, false);
         var request = new ActivationRequest(eligibility, TimeSpan.FromHours(3), "Project work", new TicketInfo("CHG-77", null));
 
-        var result = await service.ActivateAsync(request);
+        var result = await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(result.IsSuccess);
         var body = handler.RequestBodies[0];
@@ -111,7 +111,7 @@ public sealed class PimGroupServiceTests
         var request = new ActivationRequest(
             eligibility, TimeSpan.FromHours(1), "Project work", null, AuthContextClaim: "c3");
 
-        await service.ActivateAsync(request);
+        await service.ActivateAsync(request, TestContext.Current.CancellationToken);
 
         var option = Assert.Single(handler.Requests[0].Options
             .Select(kv => kv.Value)

@@ -50,6 +50,22 @@ public sealed class ToastService : IToastService
     }
 
     /// <inheritdoc />
+    public void ShowApprovalOutcome(string resourceName, ApprovalOutcome outcome)
+    {
+        var (title, message) = outcome switch
+        {
+            ApprovalOutcome.Approved => ("Approved", $"{resourceName} was approved and is now active."),
+            ApprovalOutcome.Denied => ("Request denied", $"{resourceName}: the approver denied the request."),
+            ApprovalOutcome.Canceled => ("Request canceled", $"{resourceName}: the request was canceled."),
+            ApprovalOutcome.Expired => ("Request expired", $"{resourceName}: no approver responded in time."),
+            ApprovalOutcome.Failed => ("Activation failed", $"{resourceName} was approved, but the activation failed."),
+            _ => ("Request closed", $"{resourceName} is no longer waiting for approval."),
+        };
+
+        Show(title, message);
+    }
+
+    /// <inheritdoc />
     public void ShowError(string title, string detail) => Show(title, detail);
 
     private void Show(string title, string message)

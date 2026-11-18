@@ -9,6 +9,7 @@
   <resources>
     <stringTable>
       <string id="SUPPORTED_ModernWorkElevate_1_2">ModernWork Elevate 1.2 or later on Windows 11 25H2 or later</string>
+      <string id="SUPPORTED_ModernWorkElevate_1_4">ModernWork Elevate 1.4 or later on Windows 11 25H2 or later</string>
       <string id="Cat_ModernWorkElevate">ModernWork Elevate</string>
 
       <string id="Tenants">Pre-configured tenants and App Registrations</string>
@@ -30,6 +31,15 @@ If disabled or not configured: users configure their tenants themselves.</string
       <string id="LockTenants_Help">If enabled, only the tenants from "Pre-configured tenants and App Registrations" are available. Tenants the user configured are ignored, and users cannot add, change or remove tenants.
 
 If disabled or not configured, users can add tenants in addition to the pre-configured ones.</string>
+
+      <string id="UpdateCheck">Check GitHub for new versions</string>
+      <string id="UpdateCheck_Help">Controls whether ModernWork Elevate asks GitHub (api.github.com) for the newest release. The app only checks: when a newer version exists it shows a notice whose button opens the release page. It never downloads or installs anything. The request carries no user, device or tenant data — GitHub sees the device's IP address and the app version.
+
+If enabled: the app checks once a day; users cannot turn it off.
+If disabled: the app never contacts GitHub, and the "Check for updates" button is hidden.
+If not configured: each user decides in Settings; the check is off until they turn it on.
+
+Recommended for managed devices that receive updates through Intune or Configuration Manager: disabled.</string>
 
 
     </stringTable>

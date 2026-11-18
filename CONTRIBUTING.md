@@ -21,6 +21,14 @@ dotnet test
 
 The build enforces warnings-as-errors and runs StyleCop analyzers; both must pass before opening a PR.
 
+Tests use xunit v3 on Microsoft.Testing.Platform; `global.json` switches `dotnet test` to its MTP
+mode. Options for the test run go after `--`, for example one test class or coverage:
+
+```powershell
+dotnet test -- --filter-class "*AccountStoreTests"
+dotnet test --coverlet --results-directory ./TestResults   # what CI runs; settings in testconfig.json
+```
+
 The full pipeline — tests, publish, signing, MSI, detection script — is one command:
 
 ```powershell
